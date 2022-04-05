@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: GPL-2.0 OR X11
+/*
+ * Copyright 2014-2020 Toradex
+ * Copyright 2012 Freescale Semiconductor, Inc.
+ * Copyright 2011 Linaro Ltd.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pwm/pwm.h>
+#include "imx6dl.dtsi"
+#include "imx6qdl-colibri.dtsi"
+
+/ {
+	model = "Toradex Colibri iMX6DL/S on Colibri Evaluation Board V3";
+	compatible = "toradex,colibri_imx6dl-eval-v3", "toradex,colibri_imx6dl",
+		     "fsl,imx6dl";
+
+	/* Will be filled by the bootloader */
+	memory@10000000 {
+		device_type = "memory";
+		reg = <0x10000000 0>;
+	};
+
+	aliases {
+		i2c0 = &i2c2;
+		i2c1 = &i2c3;
+	};
+
+	aliases {
+		rtc0 = &rtc_i2c;
+		rtc1 = &snvs_rtc;
+	};
+
+	aliases {
+		/*
+		 * the following, together with kernel patches, forces a fixed
+		 * assignment between device id and usdhc controller
+		 * i.e. the eMMC on usdhc3 will be /dev/mmcblk0
+		 */
+		mmc0 = &usdhc3; /* eMMC */
+		mmc1 = &usdhc1; /* MMC 4bit slot */
+	};
+
+	extcon_usbc_det: usbc_det {
+		compatible = "linux,extcon-usb-gpio";
+		debounce = <25>;
+		id-gpio = <&gpio7 12 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_usbc_det>;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	/* Fixed crystal dedicated to mcp251x */
+	clk16m: clock-16m {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <16000000>;
+		clock-output-names = "clk16m";
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_gpio_keys>;
+
+		wakeup {
+			label = "Wake-Up";
+			gpios = <&gpio2 22 GPIO_ACTIVE_HIGH>; /* SODIMM 45 */
+			linux,code = <KEY_WAKEUP>;
+			debounce-interval = <10>;
+			wakeup-source;
+		};
+	};
+};
+
+/* Colibri SSP */
+&ecspi4 {
+	mcp251x0: mcp251x@0 {
+		compatible = "microchip,mcp2515";
+		reg = <0>;
+		clocks = <&clk16m>;
+		interrupt-parent = <&gpio3>;
+		interrupts = <27 0x2>;
+		spi-max-frequency = <10000000>;
+		status = "okay";
+	};
+	/* To keep the CAN controller enabled by default,
+	 * disable conflicting spidev. This spidev device
+	 * enables with the devicetree overlay.
+	 */
+	spidev0: spidev@0 {
+		status = "disabled";
+	};
+};
+
+/*
+ * Colibri I2C: I2C3_SDA/SCL on SODIMM 194/196 (e.g. RTC on carrier board)
+ */
+&i2c3 {
+	status = "okay";
+
+	/* M41T0M6 real time clock on carrier board */
+	rtc_i2c: rtc@68 {
+		compatible = "st,m41t0";
+		reg = <0x68>;
+	};
+};
+
+&iomuxc {
+	pinctrl-names = "default";
+	pinctrl-0 = <
+		&pinctrl_weim_gpio_1 &pinctrl_weim_gpio_2
+		&pinctrl_weim_gpio_3 &pinctrl_weim_gpio_4
+		&pinctrl_weim_gpio_5 &pinctrl_weim_gpio_6
+		&pinctrl_csi_gpio_1
+		&pinctrl_gpio_1
+		&pinctrl_gpio_2
+		&pinctrl_usbh_oc_1 &pinctrl_usbc_id_1
+	>;
+};
+
+&mxcfb1 {
+	status = "okay";
+};
+
+&mxcfb2 {
+	status = "okay";
+};
+
+&pwm1 {
+	status = "okay";
+};
+
+&pwm2 {
+	status = "okay";
+};
+
+&pwm3 {
+	status = "okay";
+};
+
+&pwm4 {
+	status = "okay";
+};
+
+&reg_usb_host_vbus {
+	status = "okay";
+};
+
+&uart1 {
+	status = "okay";
+};
+
+&uart2 {
+	status = "okay";
+};
+
+&uart3 {
+	status = "okay";
+};
+
+&usbh1 {
+	vbus-supply = <&reg_usb_host_vbus>;
+	status = "okay";
+};
+
+&usbotg {
+	status = "okay";
+	extcon = <&extcon_usbc_det>, <&extcon_usbc_det>;
+};
+
+/* Colibri MMC */
+&usdhc1 {
+	status = "okay";
+};
+
+&weim {
+	status = "okay";
+	fsl,weim-cs-gpr = <&gpr>;
+	/* weim memory map: 32MB on CS0, CS1, CS2 and CS3 */
+	ranges = <0 0 0x08000000 0x02000000
+		  1 0 0x0a000000 0x02000000
+		  2 0 0x0c000000 0x02000000
+		  3 0 0x0e000000 0x02000000>;
+
+	/* SRAM on Colibri nEXT_CS0 */
+	sram@0,0 {
+		compatible = "cypress,cy7c1019dv33-10zsxi, mtd-ram";
+		reg = <0 0 0x00010000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		bank-width = <2>;
+		fsl,weim-cs-timing = <0x00010081 0x00000000 0x04000000
+				      0x00000000 0x04000040 0x00000000>;
+	};
+
+	/* SRAM on Colibri nEXT_CS1 */
+	sram@1,0 {
+		compatible = "cypress,cy7c1019dv33-10zsxi, mtd-ram";
+		reg = <1 0 0x00010000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		bank-width = <2>;
+		fsl,weim-cs-timing = <0x00010081 0x00000000 0x04000000
+				      0x00000000 0x04000040 0x00000000>;
+	};
+};

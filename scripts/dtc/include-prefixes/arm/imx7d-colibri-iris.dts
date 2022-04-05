@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: GPL-2.0+ OR MIT
+/*
+ * Copyright 2017-2020 Toradex
+ */
+
+/dts-v1/;
+#include "imx7d-colibri.dtsi"
+#include "imx7-colibri-iris.dtsi"
+
+/ {
+	model = "Toradex Colibri iMX7D on Colibri Iris Board";
+	compatible = "toradex,colibri-imx7d-iris",
+		     "toradex,colibri-imx7d",
+		     "toradex,colibri-imx7d",
+		     "fsl,imx7d";
+};
+
+/*
+ * The PCAP uses SODIMM 28/30, also used for PWM<B>, PWM<C>, aka pwm2, pwm3.
+ * So if you enable following PCAP controller, disable pwm2/pwm3 first.
+ */
+&atmel_mxt_ts {
+	pinctrl-0 = <&pinctrl_atmel_adapter>;
+	interrupt-parent = <&gpio1>;
+	interrupts = <9 IRQ_TYPE_EDGE_FALLING>;		/* SODIMM_28, INT */
+	reset-gpios = <&gpio1 10 GPIO_ACTIVE_HIGH>;	/* SODIMM_30, RST */
+	status = "disabled";
+};
+
+&usbotg2 {
+	vbus-supply = <&reg_usbh_vbus>;
+	status = "okay";
+};

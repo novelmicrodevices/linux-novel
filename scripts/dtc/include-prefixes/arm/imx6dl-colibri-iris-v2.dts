@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: GPL-2.0+ OR X11
+/*
+ * Copyright 2018-2021 Toradex
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pwm/pwm.h>
+#include "imx6dl.dtsi"
+#include "imx6qdl-colibri.dtsi"
+
+/ {
+	model = "Toradex Colibri iMX6DL/S on Colibri Iris V2 Board";
+	compatible = "toradex,colibri_imx6dl-iris-v2", \
+			"toradex,colibri_imx6dl", "fsl,imx6dl";
+
+	extcon_usbc_det: usbc_det {
+		compatible = "linux,extcon-usb-gpio";
+		debounce = <25>;
+		id-gpio = <&gpio7 12 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_usbc_det>;
+	};
+
+	reg_3v3_vmmc: regulator-3v3-vmmc {
+		compatible = "regulator-fixed";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_enable_3v3_vmmc>;
+		regulator-name = "3v3_vmmc";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpio2 11 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <100>;
+		enable-active-high;
+	};
+};
+
+/* Colibri SSP */
+&ecspi4 {
+	status = "okay";
+
+	spidev0: spidev@0 {
+		compatible = "toradex,evalspi";
+		reg = <0>;
+		spi-max-frequency = <23000000>;
+		status = "okay";
+	};
+};
+
+&gpio2 {
+	/*
+	 * uart_a_on_x13_enable turns the UART transceiver for UART_A on. If one
+	 * wants to turn the transceiver off, that property has to be deleted
+	 * and the gpio handled in userspace.
+	 * The same applies to uart_b_c_on_x14_enable where the UART_B and
+	 * UART_C transceiver is turned on.
+	 */
+	uart_a_on_x13_enable {
+		gpio-hog;
+		gpios = <4 GPIO_ACTIVE_HIGH>; /* SODIMM 102 */
+		output-high;
+	};
+
+	uart_b_c_on_x14_enable {
+		gpio-hog;
+		gpios = <8 GPIO_ACTIVE_HIGH>; /* SODIMM 104 */
+		output-high;
+	};
+};
+
+/*
+ * I2C: I2C3_SDA/SCL on SODIMM 194/196 (e.g. RTC on carrier
+ * board)
+ */
+&i2c3 {
+	status = "okay";
+
+	/* M41T0M6 real time clock on carrier board */
+	rtc_i2c: rtc@68 {
+		compatible = "st,m41t0";
+		reg = <0x68>;
+	};
+};
+
+&mxcfb1 {
+	status = "okay";
+};
+
+&mxcfb2 {
+	status = "okay";
+};
+
+&pwm1 {
+	status = "okay";
+};
+
+&pwm2 {
+	status = "okay";
+};
+
+&pwm3 {
+	status = "okay";
+};
+
+&pwm4 {
+	status = "okay";
+};
+
+&reg_usb_host_vbus {
+	status = "okay";
+};
+
+/* Colibri UART_A */
+&uart1 {
+	status = "okay";
+};
+
+/* Colibri UART_B */
+&uart2 {
+	status = "okay";
+};
+
+/* Colibri UART_C */
+&uart3 {
+	status = "okay";
+};
+
+&usbh1 {
+	vbus-supply = <&reg_usb_host_vbus>;
+	status = "okay";
+};
+
+&usbotg {
+	status = "okay";
+	extcon = <&extcon_usbc_det>, <&extcon_usbc_det>;
+};
+
+&usdhc1 {
+	cap-power-off-card;
+	/delete-property/ keep-power-in-suspend;
+	vmmc-supply = <&reg_3v3_vmmc>;
+	status = "okay";
+};
+
+&iomuxc {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_lvds_transceiver &pinctrl_gpio_iris>;
+
+	gpio {
+		pinctrl_lvds_transceiver: lvds-tx {
+			fsl,pins = <
+				MX6QDL_PAD_GPIO_7__GPIO1_IO07	0x0b030 /* SODIMM 55 */
+				MX6QDL_PAD_GPIO_8__GPIO1_IO08	0x03030 /* SODIMM 63 */
+				MX6QDL_PAD_EIM_WAIT__GPIO5_IO00	0x03030 /* SODIMM 95 */
+				MX6QDL_PAD_SD2_DAT3__GPIO1_IO12	0x03030 /* SODIMM_99 */
+			>;
+		};
+
+		pinctrl_gpio_iris: gpio-iris {
+			fsl,pins = <
+				MX6QDL_PAD_SD2_DAT0__GPIO1_IO15	0x1b0b0 /* SODIMM 98 */
+				MX6QDL_PAD_NANDF_D3__GPIO2_IO03	0x1b0b0 /* SODIMM 133 */
+				MX6QDL_PAD_EIM_A18__GPIO2_IO20	0x1b0b0 /* SODIMM 103 */
+				MX6QDL_PAD_EIM_A17__GPIO2_IO21	0x1b0b0 /* SODIMM 101 */
+				MX6QDL_PAD_EIM_A20__GPIO2_IO18	0x1b0b0 /* SODIMM 97 */
+				MX6QDL_PAD_EIM_A23__GPIO6_IO06	0x1b0b0 /* SODIMM 85 */
+				MX6QDL_PAD_EIM_A19__GPIO2_IO19	0x1b0b0 /* SODIMM 79 */
+				MX6QDL_PAD_EIM_A16__GPIO2_IO22	0x1b0b0 /* SODIMM 45 */
+			>;
+		};
+	};
+
+	usdhc {
+		pinctrl_enable_3v3_vmmc: enable_3v3_vmmc {
+			fsl,pins = <
+				MX6QDL_PAD_SD4_DAT3__GPIO2_IO11	0x1b0b0
+			>;
+		};
+	};
+};

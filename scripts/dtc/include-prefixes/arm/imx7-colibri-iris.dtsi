@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: GPL-2.0+ OR MIT
+/*
+ * Copyright 2018-2020 Toradex
+ */
+
+#include <dt-bindings/input/input.h>
+
+/ {
+	chosen {
+		bootargs = "console=ttymxc0,115200";
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_gpiokeys>;
+
+		power {
+			label = "Wake-Up";
+			gpios = <&gpio1 1 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+			linux,code = <KEY_WAKEUP>;
+			debounce-interval = <10>;
+			gpio-key,wakeup;
+		};
+	};
+
+	extcon_usbc_det: usbc_det {
+		compatible = "linux,extcon-usb-gpio";
+		debounce = <25>;
+		id-gpio = <&gpio7 14 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_usbc_det>;
+	};
+
+	reg_usbh_vbus: regulator-usbh-vbus {
+		compatible = "regulator-fixed";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_usbh_reg>;
+		regulator-name = "VCC_USB[1-4]";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&gpio4 7 GPIO_ACTIVE_LOW>;
+		vin-supply = <&reg_5v0>;
+	};
+
+	reg_3v3: regulator-3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "3.3V";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	reg_5v0: regulator-5v0 {
+		compatible = "regulator-fixed";
+		regulator-name = "5V";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+	};
+};
+
+&adc1 {
+	status = "okay";
+};
+
+&adc2 {
+	status = "okay";
+};
+
+&epxp {
+	status = "okay";
+};
+
+&fec1 {
+	status = "okay";
+};
+
+&i2c4 {
+	status = "okay";
+
+	/* M41T0M6 real time clock on carrier board */
+	rtc: m41t0m6@68 {
+		compatible = "st,m41t0";
+		reg = <0x68>;
+	};
+};
+
+&pwm1 {
+	status = "okay";
+};
+
+&pwm2 {
+	/* The pwm2 should be disabled to enable atmel_mxt_ts touchscreen for adapter. */
+	status = "okay";
+};
+
+&pwm3 {
+	/* The pwm2 should be disabled to enable atmel_mxt_ts touchscreen for adapter . */
+	status = "okay";
+};
+
+&pwm4 {
+	status = "okay";
+};
+
+&uart1 {
+	status = "okay";
+};
+
+&uart2 {
+	status = "okay";
+};
+
+&uart3 {
+	status = "okay";
+};
+
+&usbotg1 {
+	extcon = <&extcon_usbc_det>,  <&extcon_usbc_det>;
+	vbus-supply = <&reg_usbh_vbus>;
+	status = "okay";
+};
+
+&gpio2 {
+	/*
+	 * uart25 turns the UART transceiver for UART2 and 5 on. If one wants to
+	 * turn the transceiver off, that property has to be deleted and the
+	 * gpio handled in userspace.
+	 * The same applies to uart1_tx_on where the UART transceiver is
+	 * turned on.
+	 */
+	uart25_tx_on {
+		gpio-hog;
+		gpios = <27 0>; /* SODIMM 104 */
+		output-high;
+	};
+};
+
+&gpio5 {
+	uart1_tx_on {
+		gpio-hog;
+		gpios = <17 0>; /* SODIMM 102 */
+		output-high;
+	};
+};
+
+&usdhc1 {
+	vmmc-supply = <&reg_3v3>;
+	status = "okay";
+};
+
+
