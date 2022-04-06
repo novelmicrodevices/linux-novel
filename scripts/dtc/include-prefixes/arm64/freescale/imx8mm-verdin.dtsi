@@ -524,13 +524,23 @@
 
 /* Verdin I2C_2_DSI */
 &i2c2 {
-	clock-frequency = <10000>;
+	clock-frequency = <400000>;
 	pinctrl-names = "default", "gpio";
 	pinctrl-0 = <&pinctrl_i2c2>;
 	pinctrl-1 = <&pinctrl_i2c2_gpio>;
 	scl-gpios = <&gpio5 16 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 	sda-gpios = <&gpio5 17 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-	status = "disabled";
+	status = "okay";
+	touch@41 {
+		compatible = "tchip,ilitek";
+		reg = <0x41>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_gpio8>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <9 IRQ_TYPE_LEVEL_LOW>;
+		touch,irq-gpio = <&gpio1 9 0x02>;
+		touch,reset-gpio = <&gpio1 8 GPIO_ACTIVE_HIGH>;
+	};
 };
 
 /* Verdin I2C_3_HDMI N/A */
@@ -543,6 +553,7 @@
 	pinctrl-1 = <&pinctrl_i2c3_gpio>;
 	scl-gpios = <&gpio5 18 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 	sda-gpios = <&gpio5 19 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+	status = "okay"
 };
 
 /* Verdin I2C_1 */
@@ -706,14 +717,18 @@
 &uart2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart2>;
-	fsl,uart-has-rtscts;
+	/delete-property/fsl,uart-has-rtscts;
+	status = "okay";
 };
 
 /* Verdin UART_2 */
 &uart3 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart3>;
-	fsl,uart-has-rtscts;
+	assigned-clocks = <&clk IMX8MM_CLK_UART3>;
+	assigned-clock-parents = <&clk IMX8MM_SYS_PLL1_80M>;
+	/delete-property/fsl,uart-has-rtscts;
+	status = "okay";
 };
 
 /* Verdin UART_4 */
@@ -961,10 +976,10 @@
 		>;
 	};
 
-	/* Verdin GPIO_10_DSI (pulled-up as active-low) */
+	/* Verdin GPIO_10_DSI */
 	pinctrl_gpio_10_dsi: gpio10dsigrp {
 		fsl,pins = <
-			MX8MM_IOMUXC_NAND_CE2_B_GPIO3_IO3		0x146	/* SODIMM 21 */
+			MX8MM_IOMUXC_NAND_CE2_B_GPIO3_IO3		0x106	/* SODIMM 21 */
 		>;
 	};
 
@@ -1116,7 +1131,7 @@
 	/* Verdin PWM_3_DSI (pulled-down as active-high) shared with PWM1_OUT */
 	pinctrl_pwm_3_dsi_hpd_gpio: pwm3dsihpdgpiogrp {
 		fsl,pins = <
-			MX8MM_IOMUXC_GPIO1_IO01_GPIO1_IO1		0x106	/* SODIMM 19 */
+			MX8MM_IOMUXC_GPIO1_IO01_GPIO1_IO1		0x6	/* SODIMM 19 */
 		>;
 	};
 

@@ -384,8 +384,7 @@ struct bufdesc_ex {
 #define FEC_ENET_TS_AVAIL       ((uint)0x00010000)
 #define FEC_ENET_TS_TIMER       ((uint)0x00008000)
 
-#define FEC_DEFAULT_IMASK (FEC_ENET_TXF | FEC_ENET_RXF | FEC_ENET_MII)
-#define FEC_NAPI_IMASK	FEC_ENET_MII
+#define FEC_DEFAULT_IMASK (FEC_ENET_TXF | FEC_ENET_RXF)
 #define FEC_RX_DISABLED_IMASK (FEC_DEFAULT_IMASK & (~FEC_ENET_RXF))
 
 #define FEC_ENET_ETHEREN	((uint)0x00000002)
@@ -488,6 +487,12 @@ struct fec_enet_stop_mode {
 	u8 req_bit;
 };
 
+/* Some FEC hardware blocks need the MMFR cleared at setup time to avoid
+ * the generation of an MII event. This must be avoided in the older
+ * FEC blocks where it will stop MII events being generated.
+ */
+#define FEC_QUIRK_CLEAR_SETUP_MII	(1 << 17)
+
 struct bufdesc_prop {
 	int qid;
 	/* Address of Rx and Tx buffers */
@@ -573,7 +578,6 @@ struct fec_enet_private {
 	int	link;
 	int	full_duplex;
 	int	speed;
-	struct	completion mdio_done;
 	int	irq[FEC_IRQ_NUM];
 	bool	bufdesc_ex;
 	int	pause_flag;

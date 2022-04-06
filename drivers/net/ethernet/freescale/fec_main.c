@@ -36,6 +36,7 @@
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
 #include <linux/in.h>
+#include <linux/iopoll.h>
 #include <linux/ip.h>
 #include <net/ip.h>
 #include <net/tso.h>
@@ -105,13 +106,14 @@ static struct platform_device_id fec_devtype[] = {
 		.name = "imx28-fec",
 		.driver_data = FEC_QUIRK_ENET_MAC | FEC_QUIRK_SWAP_FRAME |
 				FEC_QUIRK_SINGLE_MDIO | FEC_QUIRK_HAS_RACC |
-				FEC_QUIRK_HAS_FRREG,
+				FEC_QUIRK_HAS_FRREG | FEC_QUIRK_CLEAR_SETUP_MII,
 	}, {
 		.name = "imx6q-fec",
 		.driver_data = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_GBIT |
 				FEC_QUIRK_HAS_BUFDESC_EX | FEC_QUIRK_HAS_CSUM |
 				FEC_QUIRK_HAS_VLAN | FEC_QUIRK_ERR006358 |
-				FEC_QUIRK_HAS_RACC | FEC_QUIRK_HAS_PMQOS,
+				FEC_QUIRK_HAS_RACC | FEC_QUIRK_HAS_PMQOS |
+				FEC_QUIRK_CLEAR_SETUP_MII,
 	}, {
 		.name = "mvf600-fec",
 		.driver_data = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_RACC,
@@ -121,14 +123,15 @@ static struct platform_device_id fec_devtype[] = {
 				FEC_QUIRK_HAS_BUFDESC_EX | FEC_QUIRK_HAS_CSUM |
 				FEC_QUIRK_HAS_VLAN | FEC_QUIRK_HAS_AVB |
 				FEC_QUIRK_ERR007885 | FEC_QUIRK_BUG_CAPTURE |
-				FEC_QUIRK_HAS_RACC | FEC_QUIRK_HAS_COALESCE,
+				FEC_QUIRK_HAS_RACC | FEC_QUIRK_HAS_COALESCE |
+				FEC_QUIRK_CLEAR_SETUP_MII,
 	}, {
 		.name = "imx6ul-fec",
 		.driver_data = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_GBIT |
 				FEC_QUIRK_HAS_BUFDESC_EX | FEC_QUIRK_HAS_CSUM |
 				FEC_QUIRK_HAS_VLAN | FEC_QUIRK_ERR007885 |
 				FEC_QUIRK_BUG_CAPTURE | FEC_QUIRK_HAS_RACC |
-				FEC_QUIRK_HAS_COALESCE,
+				FEC_QUIRK_HAS_COALESCE | FEC_QUIRK_CLEAR_SETUP_MII,
 	}, {
 		.name = "imx8mq-fec",
 		.driver_data = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_GBIT |
@@ -136,7 +139,7 @@ static struct platform_device_id fec_devtype[] = {
 				FEC_QUIRK_HAS_VLAN | FEC_QUIRK_HAS_AVB |
 				FEC_QUIRK_ERR007885 | FEC_QUIRK_BUG_CAPTURE |
 				FEC_QUIRK_HAS_RACC | FEC_QUIRK_HAS_COALESCE |
-				FEC_QUIRK_HAS_EEE,
+				FEC_QUIRK_HAS_EEE | FEC_QUIRK_CLEAR_SETUP_MII,
 	}, {
 		.name = "imx8qm-fec",
 		.driver_data = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_GBIT |
@@ -144,13 +147,14 @@ static struct platform_device_id fec_devtype[] = {
 				FEC_QUIRK_HAS_VLAN | FEC_QUIRK_HAS_AVB |
 				FEC_QUIRK_ERR007885 | FEC_QUIRK_BUG_CAPTURE |
 				FEC_QUIRK_HAS_RACC | FEC_QUIRK_HAS_COALESCE |
-				FEC_QUIRK_DELAYED_CLKS_SUPPORT,
+				FEC_QUIRK_DELAYED_CLKS_SUPPORT | FEC_QUIRK_CLEAR_SETUP_MII,
 	}, {
 		.name = "s32v234-fec",
 		.driver_data = FEC_QUIRK_ENET_MAC | FEC_QUIRK_HAS_GBIT |
 				FEC_QUIRK_HAS_BUFDESC_EX | FEC_QUIRK_HAS_CSUM |
 				FEC_QUIRK_HAS_VLAN | FEC_QUIRK_HAS_AVB |
-				FEC_QUIRK_ERR007885 | FEC_QUIRK_BUG_CAPTURE,
+				FEC_QUIRK_ERR007885 | FEC_QUIRK_BUG_CAPTURE |
+				FEC_QUIRK_CLEAR_SETUP_MII,
 	}, {
 		/* sentinel */
 	}
@@ -979,8 +983,8 @@ fec_restart(struct net_device *ndev)
 	writel((__force u32)cpu_to_be32(temp_mac[1]),
 	       fep->hwp + FEC_ADDR_HIGH);
 
-	/* Clear any outstanding interrupt. */
-	writel(0xffffffff, fep->hwp + FEC_IEVENT);
+	/* Clear any outstanding interrupt, except MDIO. */
+	writel((0xffffffff & ~FEC_ENET_MII), fep->hwp + FEC_IEVENT);
 
 	fec_enet_bd_init(ndev);
 
@@ -1133,7 +1137,7 @@ fec_restart(struct net_device *ndev)
 	if (fep->link)
 		writel(FEC_DEFAULT_IMASK, fep->hwp + FEC_IMASK);
 	else
-		writel(FEC_ENET_MII, fep->hwp + FEC_IMASK);
+		writel(0, fep->hwp + FEC_IMASK);
 
 	/* Init the interrupt coalescing */
 	fec_enet_itr_coal_init(ndev);
@@ -1714,6 +1718,10 @@ fec_enet_interrupt(int irq, void *dev_id)
 	irqreturn_t ret = IRQ_NONE;
 
 	int_events = readl(fep->hwp + FEC_IEVENT);
+
+	/* Don't clear MDIO events, we poll for those */
+	int_events &= ~FEC_ENET_MII;
+
 	writel(int_events, fep->hwp + FEC_IEVENT);
 	fec_enet_collect_events(fep, int_events);
 
@@ -1721,16 +1729,12 @@ fec_enet_interrupt(int irq, void *dev_id)
 		ret = IRQ_HANDLED;
 
 		if (napi_schedule_prep(&fep->napi)) {
-			/* Disable the NAPI interrupts */
-			writel(FEC_NAPI_IMASK, fep->hwp + FEC_IMASK);
+			/* Disable interrupts */
+			writel(0, fep->hwp + FEC_IMASK);
 			__napi_schedule(&fep->napi);
 		}
 	}
 
-	if (int_events & FEC_ENET_MII) {
-		ret = IRQ_HANDLED;
-		complete(&fep->mdio_done);
-	}
 	return ret;
 }
 
@@ -1884,11 +1888,24 @@ static void fec_enet_adjust_link(struct net_device *ndev)
 		phy_print_status(phy_dev);
 }
 
+static int fec_enet_mdio_wait(struct fec_enet_private *fep)
+{
+	uint ievent;
+	int ret;
+
+	ret = readl_poll_timeout_atomic(fep->hwp + FEC_IEVENT, ievent,
+					ievent & FEC_ENET_MII, 2, 30000);
+
+	if (!ret)
+		writel(FEC_ENET_MII, fep->hwp + FEC_IEVENT);
+
+	return ret;
+}
+
 static int fec_enet_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 {
 	struct fec_enet_private *fep = bus->priv;
 	struct device *dev = &fep->pdev->dev;
-	unsigned long time_left;
 	uint int_events;
 	int ret = 0, frame_start, frame_addr, frame_op;
 	bool is_c45 = !!(regnum & MII_ADDR_C45);
@@ -1896,8 +1913,6 @@ static int fec_enet_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 	ret = pm_runtime_get_sync(dev);
 	if (ret < 0)
 		return ret;
-
-	reinit_completion(&fep->mdio_done);
 
 	if (is_c45) {
 		frame_start = FEC_MMFR_ST_C45;
@@ -1910,11 +1925,9 @@ static int fec_enet_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 		       fep->hwp + FEC_MII_DATA);
 
 		/* wait for end of transfer */
-		time_left = wait_for_completion_timeout(&fep->mdio_done,
-				usecs_to_jiffies(FEC_MII_TIMEOUT));
-		if (time_left == 0) {
+		ret = fec_enet_mdio_wait(fep);
+		if (ret) {
 			netdev_err(fep->netdev, "MDIO address write timeout\n");
-			ret = -ETIMEDOUT;
 			goto out;
 		}
 
@@ -1933,15 +1946,10 @@ static int fec_enet_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 		FEC_MMFR_TA, fep->hwp + FEC_MII_DATA);
 
 	/* wait for end of transfer */
-	time_left = wait_for_completion_timeout(&fep->mdio_done,
-			usecs_to_jiffies(FEC_MII_TIMEOUT));
-	if (time_left == 0) {
-		int_events = readl(fep->hwp + FEC_IEVENT);
-		if (!(int_events & FEC_ENET_MII)) {
-			netdev_err(fep->netdev, "MDIO read timeout\n");
-			ret = -ETIMEDOUT;
-			goto out;
-		}
+	ret = fec_enet_mdio_wait(fep);
+	if (ret) {
+		netdev_err(fep->netdev, "MDIO read timeout\n");
+		goto out;
 	}
 
 	ret = FEC_MMFR_DATA(readl(fep->hwp + FEC_MII_DATA));
@@ -1958,7 +1966,6 @@ static int fec_enet_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
 {
 	struct fec_enet_private *fep = bus->priv;
 	struct device *dev = &fep->pdev->dev;
-	unsigned long time_left;
 	int ret, frame_start, frame_addr;
 	bool is_c45 = !!(regnum & MII_ADDR_C45);
 
@@ -1967,8 +1974,6 @@ static int fec_enet_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
 		return ret;
 	else
 		ret = 0;
-
-	reinit_completion(&fep->mdio_done);
 
 	if (is_c45) {
 		frame_start = FEC_MMFR_ST_C45;
@@ -1981,11 +1986,9 @@ static int fec_enet_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
 		       fep->hwp + FEC_MII_DATA);
 
 		/* wait for end of transfer */
-		time_left = wait_for_completion_timeout(&fep->mdio_done,
-			usecs_to_jiffies(FEC_MII_TIMEOUT));
-		if (time_left == 0) {
+		ret = fec_enet_mdio_wait(fep);
+		if (ret) {
 			netdev_err(fep->netdev, "MDIO address write timeout\n");
-			ret = -ETIMEDOUT;
 			goto out;
 		}
 	} else {
@@ -2001,12 +2004,9 @@ static int fec_enet_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
 		fep->hwp + FEC_MII_DATA);
 
 	/* wait for end of transfer */
-	time_left = wait_for_completion_timeout(&fep->mdio_done,
-			usecs_to_jiffies(FEC_MII_TIMEOUT));
-	if (time_left == 0) {
+	ret = fec_enet_mdio_wait(fep);
+	if (ret)
 		netdev_err(fep->netdev, "MDIO write timeout\n");
-		ret  = -ETIMEDOUT;
-	}
 
 out:
 	pm_runtime_mark_last_busy(dev);
@@ -2252,7 +2252,22 @@ static int fec_enet_mii_init(struct platform_device *pdev)
 
 	fep->phy_speed = mii_speed << 1 | holdtime << 8;
 
+	if (fep->quirks & FEC_QUIRK_CLEAR_SETUP_MII) {
+		/* Clear MMFR to avoid to generate MII event by writing MSCR.
+		 * MII event generation condition:
+		 * - writing MSCR:
+		 *	- mmfr[31:0]_not_zero & mscr[7:0]_is_zero &
+		 *	  mscr_reg_data_in[7:0] != 0
+		 * - writing MMFR:
+		 *	- mscr[7:0]_not_zero
+		 */
+		writel(0, fep->hwp + FEC_MII_DATA);
+	}
+
 	writel(fep->phy_speed, fep->hwp + FEC_MII_SPEED);
+
+	/* Clear any pending transaction complete indication */
+	writel(FEC_ENET_MII, fep->hwp + FEC_IEVENT);
 
 	fep->mii_bus = mdiobus_alloc();
 	if (fep->mii_bus == NULL) {
@@ -3954,7 +3969,6 @@ fec_probe(struct platform_device *pdev)
 	else
 		fep->wake_irq = fep->irq[0];
 
-	init_completion(&fep->mdio_done);
 	/* board only enable one mii bus in default */
 	if (!of_get_property(np, "fsl,mii-exclusive", NULL))
 		fep->quirks |= FEC_QUIRK_SINGLE_MDIO;
