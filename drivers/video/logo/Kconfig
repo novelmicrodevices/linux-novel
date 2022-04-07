@@ -70,6 +70,6 @@ config LOGO_SUPERH_CLUT224
 
 config LOGO_CUSTOM_CLUT224
 	bool "Custom 224-color Linux logo"
-	default n
+	default y
 
 endif # LOGO
