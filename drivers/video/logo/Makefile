@@ -13,10 +13,8 @@ obj-$(CONFIG_LOGO_SUN_CLUT224)		+= logo_sun_clut224.o
 obj-$(CONFIG_LOGO_SUPERH_MONO)		+= logo_superh_mono.o
 obj-$(CONFIG_LOGO_SUPERH_VGA16)		+= logo_superh_vga16.o
 obj-$(CONFIG_LOGO_SUPERH_CLUT224)	+= logo_superh_clut224.o
-
 obj-$(CONFIG_SPU_BASE)			+= logo_spe_clut224.o
-
-obj-$(CONFIG_LOGO_CUSTOM_CLUT224)	+= logo_custom_clut224.o
+obj-y	+= logo_custom_clut224.o
 
 # How to generate logo's
 
