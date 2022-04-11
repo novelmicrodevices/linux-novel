@@ -31,72 +31,6 @@ static struct workqueue_struct *bat_wq;
 static struct delayed_work esd_work;
 static struct delayed_work bat_work;
 
-#if CHARGER_NOTIFIER_CALLBACK
-#if KERNEL_VERSION(4, 1, 0) <= LINUX_VERSION_CODE
-/* add_for_charger_start */
-static int ilitek_charger_notifier_callback(struct notifier_block *nb, unsigned long val, void *v)
-{
-	int ret = 0;
-	struct power_supply *psy = NULL;
-	union power_supply_propval prop;
-
-	if (ilits->fw_update_stat != 100)
-		return 0;
-
-	psy = power_supply_get_by_name("usb");
-	if (!psy) {
-		ILI_ERR("Couldn't get usbpsy\n");
-		return -EINVAL;
-	}
-	if (!strcmp(psy->desc->name, "usb")) {
-		if (psy && val == POWER_SUPPLY_PROP_STATUS) {
-			ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_PRESENT, &prop);
-			if (ret < 0) {
-				ILI_ERR("Couldn't get POWER_SUPPLY_PROP_ONLINE rc=%d\n", ret);
-				return ret;
-			} else {
-				if (ilits->usb_plug_status == 2)
-					ilits->usb_plug_status = prop.intval;
-				if (ilits->usb_plug_status != prop.intval) {
-					ILI_INFO("usb prop.intval =%d\n", prop.intval);
-					ilits->usb_plug_status = prop.intval;
-					if (!ilits->tp_suspend && (ilits->charger_notify_wq != NULL))
-						queue_work(ilits->charger_notify_wq, &ilits->update_charger);
-				}
-			}
-		}
-	}
-	return 0;
-}
-static void ilitek_update_charger(struct work_struct *work)
-{
-	int ret = 0;
-	mutex_lock(&ilits->touch_mutex);
-	ret = ili_ic_func_ctrl("plug", !ilits->usb_plug_status);// plug in
-	if (ret < 0) {
-		ILI_ERR("Write plug in failed\n");
-	}
-	mutex_unlock(&ilits->touch_mutex);
-}
-void ilitek_plat_charger_init(void)
-{
-	int ret = 0;
-	ilits->usb_plug_status = 2;
-	ilits->charger_notify_wq = create_singlethread_workqueue("ili_charger_wq");
-	if (!ilits->charger_notify_wq) {
-		ILI_ERR("allocate ili_charger_notify_wq failed\n");
-		return;
-	}
-	INIT_WORK(&ilits->update_charger, ilitek_update_charger);
-	ilits->notifier_charger.notifier_call = ilitek_charger_notifier_callback;
-	ret = power_supply_reg_notifier(&ilits->notifier_charger);
-	if (ret < 0)
-		ILI_ERR("power_supply_reg_notifier failed\n");
-}
-/* add_for_charger_end */
-#endif
-#endif
-
 #if RESUME_BY_DDI
 static struct workqueue_struct	*resume_by_ddi_wq;
 static struct work_struct	resume_by_ddi_work;
@@ -119,6 +53,7 @@ static void ilitek_resume_by_ddi_work(struct work_struct *work)
 	ILI_INFO("TP resume end by wq\n");
 	ili_wq_ctrl(WQ_ESD, ENABLE);
 	ili_wq_ctrl(WQ_BAT, ENABLE);
+	ilits->tp_suspend = false;
 	mutex_unlock(&ilits->touch_mutex);
 }
 
@@ -132,26 +67,16 @@ void ili_resume_by_ddi(void)
 	mutex_lock(&ilits->touch_mutex);
 
 	ILI_INFO("TP resume start called by ddi\n");
-	ilits->tp_suspend = false;
+
 	/*
 	 * To match the timing of sleep out, the first of mipi cmd must be sent within 10ms
 	 * after TP reset. We then create a wq doing host download before resume.
 	 */
-#if (ENGINEER_FLOW)
-	if (!ilits->eng_flow) {
-		atomic_set(&ilits->fw_stat, ENABLE);
-		ili_reset_ctrl(ilits->reset);
-		ili_ice_mode_ctrl(ENABLE, OFF);
-		ilits->ddi_rest_done = true;
-		mdelay(5);
-	}
-#else
 	atomic_set(&ilits->fw_stat, ENABLE);
 	ili_reset_ctrl(ilits->reset);
 	ili_ice_mode_ctrl(ENABLE, OFF);
 	ilits->ddi_rest_done = true;
 	mdelay(5);
-#endif
 	queue_work(resume_by_ddi_wq, &(resume_by_ddi_work));
 
 	mutex_unlock(&ilits->touch_mutex);
@@ -209,7 +134,7 @@ static int ili_knuckle_roi_switch(struct ts_roi_info *info)
 			return ret;
 		}
 
-		if (!info->roi_switch) {
+		if(!info->roi_switch) {
 			for (i = 0; i < ROI_DATA_READ_LENGTH; i++) {
 				ilits->knuckle_roi_data[i] = 0;
 			}
@@ -281,9 +206,10 @@ int ili_switch_tp_mode(u8 mode)
 {
 	int ret = 0;
 	bool ges_dbg = false;
-
+	int i;
+	for (i=0;i<20;i++) printk("Switch Mode to %d\r\n",mode);
 	atomic_set(&ilits->tp_sw_mode, START);
-
+	
 	ilits->actual_tp_mode = mode;
 
 	/* able to see cdc data in gesture mode */
@@ -381,10 +307,6 @@ int ili_wq_esd_i2c_check(void)
 
 static void ilitek_tddi_wq_esd_check(struct work_struct *work)
 {
-	if (mutex_is_locked(&ilits->touch_mutex)) {
-		ILI_INFO("touch is locked, ignore\n");
-		return ;
-	}
 	mutex_lock(&ilits->touch_mutex);
 	if (ilits->esd_recover() < 0) {
 		ILI_ERR("SPI ACK failed, doing spi recovery\n");
@@ -397,12 +319,15 @@ static void ilitek_tddi_wq_esd_check(struct work_struct *work)
 
 static int read_power_status(u8 *buf)
 {
+#if(1)
+	printk("Read Power Status??\r\n");
+#else
 	struct file *f = NULL;
 	mm_segment_t old_fs;
 	ssize_t byte = 0;
 
 	old_fs = get_fs();
-	set_fs(KERNEL_DS);
+	set_fs(get_ds());
 
 	f = filp_open(POWER_STATUS_PATH, O_RDONLY, 0);
 	if (ERR_ALLOC_MEM(f)) {
@@ -417,6 +342,7 @@ static int read_power_status(u8 *buf)
 
 	set_fs(old_fs);
 	filp_close(f, NULL);
+#endif
 	return 0;
 }
 
@@ -453,7 +379,7 @@ void ili_wq_ctrl(int type, int ctrl)
 {
 	switch (type) {
 	case WQ_ESD:
-		if (ilits->esd_func_ctrl || ilits->wq_ctrl) {
+		if (ENABLE_WQ_ESD || ilits->wq_ctrl) {
 			if (!esd_wq) {
 				ILI_ERR("wq esd is null\n");
 				break;
@@ -517,6 +443,9 @@ int ili_sleep_handler(int mode)
 	int ret = 0;
 	bool sense_stop = true;
 
+	printk("Seleep Mode...\r\n");
+	return 0;
+	
 	mutex_lock(&ilits->touch_mutex);
 	atomic_set(&ilits->tp_sleep, START);
 
@@ -554,7 +483,7 @@ int ili_sleep_handler(int mode)
 				ILI_ERR("Check busy timeout during suspend\n");
 		}
 
-		if ((ilits->gesture) || (ilits->prox_face_mode == true)) {
+		if (ilits->gesture) {
 			ili_switch_tp_mode(P5_X_FW_GESTURE_MODE);
 			enable_irq_wake(ilits->irq_num);
 			ili_irq_enable();
@@ -576,7 +505,7 @@ int ili_sleep_handler(int mode)
 				ILI_ERR("Check busy timeout during deep suspend\n");
 		}
 
-		if ((ilits->gesture) || (ilits->prox_face_mode == true)) {
+		if (ilits->gesture) {
 			ili_switch_tp_mode(P5_X_FW_GESTURE_MODE);
 			enable_irq_wake(ilits->irq_num);
 			ili_irq_enable();
@@ -589,18 +518,13 @@ int ili_sleep_handler(int mode)
 	case TP_RESUME:
 #if !RESUME_BY_DDI
 		ILI_INFO("TP resume start\n");
-		ilits->tp_suspend = false;
+
 		if (ilits->gesture)
 			disable_irq_wake(ilits->irq_num);
 
 		/* Set tp as demo mode and reload code if it's iram. */
 		ilits->actual_tp_mode = P5_X_FW_AP_MODE;
-		if ((ilits->proxmity_face == false) && (ilits->power_status == false) && (ilits->prox_face_mode == true)) {
-			ili_ic_func_ctrl("sleep", 0x01);
-			ili_ic_func_ctrl("sense", 0x01);
-			if (ili_set_tp_data_len(DATA_FORMAT_DEMO, false, NULL) < 0)
-				ILI_ERR("Failed to set tp data length\n");
-		} else if (ilits->fw_upgrade_mode == UPGRADE_IRAM) {
+		if (ilits->fw_upgrade_mode == UPGRADE_IRAM) {
 			if (ili_fw_upgrade_handler(NULL) < 0)
 				ILI_ERR("FW upgrade failed during resume\n");
 		} else {
@@ -608,8 +532,9 @@ int ili_sleep_handler(int mode)
 				ILI_ERR("TP Reset failed during resume\n");
 			ili_ic_func_ctrl_reset();
 		}
+		ilits->tp_suspend = false;
 		ilits->power_status = true;
-#if (PROXIMITY_BY_FW_MODE == PROXIMITY_SUSPEND_RESUME)
+#if PROXIMITY_BY_FW
 		ilits->proxmity_face = false;
 #endif
 		ILI_INFO("TP resume end\n");
@@ -646,9 +571,9 @@ int ili_fw_upgrade_handler(void *data)
 #if CHARGER_NOTIFIER_CALLBACK
 #if KERNEL_VERSION(4, 1, 0) <= LINUX_VERSION_CODE
 		/* add_for_charger_start */
-		if ((ilits->usb_plug_status) && (ilits->actual_tp_mode != P5_X_FW_TEST_MODE)) {
+		if((ilits->usb_plug_status)&&(ilits->actual_tp_mode !=P5_X_FW_TEST_MODE)) {
 			ret = ili_ic_func_ctrl("plug", !ilits->usb_plug_status);// plug in
-			if (ret < 0) {
+			if(ret<0) {
 				ILI_ERR("Write plug in failed\n");
 			}
 		}
@@ -670,50 +595,22 @@ int ili_fw_upgrade_handler(void *data)
 	return ret;
 }
 
-int ili_set_tp_data_len(int format, bool send, u8 *data)
+int ili_set_tp_data_len(int format, bool send, u8* data)
 {
 	u8 cmd[10] = {0}, ctrl = 0, debug_ctrl = 0;
 	u16 self_key = 2;
-	int ret = 0, tp_mode = ilits->actual_tp_mode, len = 0, geture_info_length = 0, demo_mode_packet_len = 0;
-
-	if (ilits->rib.nCustomerType == POSITION_CUSTOMER_TYPE_OFF && ilits->rib.nReportResolutionMode == POSITION_LOW_RESOLUTION) {
-		geture_info_length = P5_X_GESTURE_INFO_LENGTH;
-		demo_mode_packet_len = P5_X_DEMO_MODE_PACKET_LEN;
-	} else if (ilits->rib.nCustomerType != POSITION_CUSTOMER_TYPE_OFF && ilits->rib.nReportResolutionMode == POSITION_LOW_RESOLUTION) {
-		geture_info_length = P5_X_GESTURE_INFO_LENGTH;
-		demo_mode_packet_len = P5_X_5B_LOW_RESOLUTION_LENGTH + P5_X_CUSTOMER_LENGTH;
-	} else if (ilits->rib.nCustomerType != POSITION_CUSTOMER_TYPE_OFF && ilits->rib.nReportResolutionMode == POSITION_HIGH_RESOLUTION) {
-		geture_info_length = P5_X_GESTURE_INFO_LENGTH_HIGH_RESOLUTION;
-		demo_mode_packet_len = P5_X_DEMO_MODE_PACKET_LEN_HIGH_RESOLUTION + P5_X_CUSTOMER_LENGTH;
-	} else if (ilits->rib.nCustomerType == POSITION_CUSTOMER_TYPE_OFF && ilits->rib.nReportResolutionMode == POSITION_HIGH_RESOLUTION) {
-		geture_info_length = P5_X_GESTURE_INFO_LENGTH_HIGH_RESOLUTION;
-		demo_mode_packet_len = P5_X_DEMO_MODE_PACKET_LEN_HIGH_RESOLUTION;
-	}
+	int ret = 0, tp_mode = ilits->actual_tp_mode, len = 0;
 
 	switch (format) {
 	case DATA_FORMAT_DEMO:
-		len = demo_mode_packet_len;
+		len = P5_X_DEMO_MODE_PACKET_LEN;
 		ctrl = DATA_FORMAT_DEMO_CMD;
 		break;
 	case DATA_FORMAT_GESTURE_DEMO:
-		len = demo_mode_packet_len;
+		len = P5_X_DEMO_MODE_PACKET_LEN;
 		ctrl = DATA_FORMAT_DEMO_CMD;
 		break;
 	case DATA_FORMAT_DEBUG:
-		if (ilits->rib.nReportResolutionMode == POSITION_LOW_RESOLUTION) {
-			len = P5_X_DEBUG_LOW_RESOLUTION_FINGER_DATA_LENGTH;
-		} else if (ilits->rib.nReportResolutionMode == POSITION_HIGH_RESOLUTION) {
-			len = P5_X_DEBUG_HIGH_RESOLUTION_FINGER_DATA_LENGTH;
-		}
-
-		len += (2 * ilits->xch_num * ilits->ych_num) + (ilits->stx * 2) + (ilits->srx * 2) + (2 * self_key) + 16;
-		len += P5_X_INFO_CHECKSUM_LENGTH;
-
-		if (ilits->rib.nCustomerType != POSITION_CUSTOMER_TYPE_OFF) {
-			len += P5_X_CUSTOMER_LENGTH;
-		}
-		ctrl = DATA_FORMAT_DEBUG_CMD;
-		break;
 	case DATA_FORMAT_GESTURE_DEBUG:
 		len = (2 * ilits->xch_num * ilits->ych_num) + (ilits->stx * 2) + (ilits->srx * 2);
 		len += 2 * self_key + (8 * 2) + 1 + 35;
@@ -721,12 +618,12 @@ int ili_set_tp_data_len(int format, bool send, u8 *data)
 		break;
 	case DATA_FORMAT_DEMO_DEBUG_INFO:
 		/*only suport SPI interface now, so defult use size 1024 buffer*/
-		len = demo_mode_packet_len +
+		len = P5_X_DEMO_MODE_PACKET_LEN +
 			P5_X_DEMO_DEBUG_INFO_ID0_LENGTH + P5_X_INFO_HEADER_LENGTH;
 		ctrl = DATA_FORMAT_DEMO_DEBUG_INFO_CMD;
 		break;
 	case DATA_FORMAT_GESTURE_INFO:
-		len = geture_info_length;
+		len = P5_X_GESTURE_INFO_LENGTH;
 		ctrl = DATA_FORMAT_GESTURE_INFO_CMD;
 		break;
 	case DATA_FORMAT_GESTURE_NORMAL:
@@ -736,12 +633,12 @@ int ili_set_tp_data_len(int format, bool send, u8 *data)
 	case DATA_FORMAT_GESTURE_SPECIAL_DEMO:
 		if (ilits->gesture_demo_ctrl == ENABLE) {
 			if (ilits->gesture_mode == DATA_FORMAT_GESTURE_INFO)
-				len = geture_info_length + P5_X_INFO_HEADER_LENGTH + P5_X_INFO_CHECKSUM_LENGTH;
+				len = P5_X_GESTURE_INFO_LENGTH + P5_X_INFO_HEADER_LENGTH + P5_X_INFO_CHECKSUM_LENGTH;
 			else
-				len = demo_mode_packet_len + P5_X_INFO_HEADER_LENGTH + P5_X_INFO_CHECKSUM_LENGTH;
+				len = P5_X_DEMO_MODE_PACKET_LEN + P5_X_INFO_HEADER_LENGTH + P5_X_INFO_CHECKSUM_LENGTH;
 		} else {
 			if (ilits->gesture_mode == DATA_FORMAT_GESTURE_INFO)
-				len = geture_info_length;
+				len = P5_X_GESTURE_INFO_LENGTH;
 			else
 				len = P5_X_GESTURE_NORMAL_LENGTH;
 		}
@@ -759,7 +656,7 @@ int ili_set_tp_data_len(int format, bool send, u8 *data)
 		ctrl = DATA_FORMAT_DEBUG_LITE_CMD;
 		break;
 	case DATA_FORMAT_DEBUG_LITE_AREA:
-		if (data == NULL) {
+		if(cmd == NULL) {
 			ILI_ERR("DATA_FORMAT_DEBUG_LITE_AREA error cmd\n");
 			return -1;
 		}
@@ -787,11 +684,10 @@ int ili_set_tp_data_len(int format, bool send, u8 *data)
 			ili_switch_tp_mode(P5_X_FW_AP_MODE);
 		}
 
-	} else if ((atomic_read(&ilits->tp_reset) == END) && (
-		tp_mode == P5_X_FW_AP_MODE ||
+	} else if (tp_mode == P5_X_FW_AP_MODE ||
 		format == DATA_FORMAT_GESTURE_DEMO ||
 		format == DATA_FORMAT_GESTURE_DEBUG ||
-		format == DATA_FORMAT_DEMO)) {
+		format == DATA_FORMAT_DEMO) {
 		cmd[0] = P5_X_MODE_CONTROL;
 		cmd[1] = ctrl;
 		ret = ilits->wrapper(cmd, 2, NULL, 0, ON, OFF);
@@ -833,7 +729,7 @@ int ili_report_handler(void)
 	int tmp = debug_en;
 
 	/* Just in case these stats couldn't be blocked in top half context */
-	if (!ilits->boot || !ilits->report || atomic_read(&ilits->tp_reset) || atomic_read(&ilits->ignore_report) ||
+	if (!ilits->report || atomic_read(&ilits->tp_reset) ||
 		atomic_read(&ilits->fw_stat) || atomic_read(&ilits->tp_sw_mode) ||
 		atomic_read(&ilits->mp_stat) || atomic_read(&ilits->tp_sleep)) {
 		ILI_INFO("ignore report request\n");
@@ -872,13 +768,9 @@ int ili_report_handler(void)
 
 	ret = ilits->wrapper(NULL, 0, ilits->tr_buf, rlen, OFF, OFF);
 
-#if (PROXIMITY_BY_FW_MODE != PROXIMITY_NULL)
-	if (ilits->tr_buf[0] == P5_X_DEMO_PROXIMITY_ID) {
-#if (PROXIMITY_BY_FW_MODE == PROXIMITY_SUSPEND_RESUME)
+#if PROXIMITY_BY_FW
+	if (ilits->tr_buf[0] == P5_X_DEMO_PROXUMITY_ID) {
 		ili_report_proximity_mode(ilits->tr_buf, 1);
-#elif (PROXIMITY_BY_FW_MODE == PROXIMITY_BACKLIGHT)
-		ILI_DBG("proximity %s, cmd : %X\n", ilits->tr_buf[1] ? "Near" : "Far", ilits->tr_buf[1]);
-#endif
 		goto out;
 	}
 #endif
@@ -908,11 +800,11 @@ int ili_report_handler(void)
 	pack_checksum = ilits->tr_buf[rlen-1];
 	trdata = ilits->tr_buf;
 	pid = trdata[0];
-	ILI_DBG("Packet ID = %x\n", pid);
+	//printk("Packet ID = %x\n", pid);
 
 	if (checksum != pack_checksum && pid != P5_X_I2CUART_PACKET_ID) {
 		ILI_ERR("Checksum Error (0x%X)! Pack = 0x%X, len = %d\n", checksum, pack_checksum, rlen);
-		debug_en = DEBUG_ALL;
+		//debug_en = DEBUG_ALL;
 		ili_dump_data(trdata, 8, rlen, 0, "finger report with wrong");
 		debug_en = tmp;
 		ret = -EINVAL;
@@ -929,12 +821,6 @@ int ili_report_handler(void)
 		ili_report_ap_mode(trdata, rlen);
 		break;
 	case P5_X_DEBUG_PACKET_ID:
-		ili_report_debug_mode(trdata, rlen);
-		break;
-	case P5_X_DEMO_HIGH_RESOLUTION_PACKET_ID:
-		ili_report_ap_mode(trdata, rlen);
-		break;
-	case P5_X_DEBUG_HIGH_RESOLUTION_PACKET_ID:
 		ili_report_debug_mode(trdata, rlen);
 		break;
 	case P5_X_DEBUG_LITE_PACKET_ID:
@@ -954,19 +840,15 @@ int ili_report_handler(void)
 		break;
 	default:
 		ILI_ERR("Unknown packet id, %x\n", pid);
-#if (TDDI_INTERFACE == BUS_I2C)
+#if ( TDDI_INTERFACE == BUS_I2C )
 		msleep(50);
 		ili_ic_get_pc_counter(DO_I2C_RECOVER);
-		if ((ilits->actual_tp_mode == P5_X_FW_GESTURE_MODE) && ilits->fw_latch != 0) {
-			ILI_ERR("I2C esd_gesture\n");
-			ili_touch_esd_gesture_flash();
-		}
-		if (ilits->fw_latch != 0) {
+		if (ilits->fw_latch !=0){
 			msleep(50);
 			ili_ic_func_ctrl_reset();
 			ILI_ERR("I2C func_ctrl_reset\n");
 		}
-		if ((ilits->actual_tp_mode == P5_X_FW_GESTURE_MODE) && ilits->fw_latch != 0) {
+		if ((ilits->actual_tp_mode == P5_X_FW_GESTURE_MODE) && ilits->fw_latch !=0){
 			msleep(50);
 			ili_set_gesture_symbol();
 			ILI_ERR("I2C gesture_symbol\n");
@@ -992,18 +874,10 @@ int ili_reset_ctrl(int mode)
 
 	atomic_set(&ilits->tp_reset, START);
 
-#if MULTI_REPORT_RATE
-	if (mode == TP_IC_WHOLE_RST || mode == TP_HW_RST_ONLY) {
-		if (ili_ic_report_rate_register_set() < 0)
-			ILI_ERR("write report rate password failed\n");
-	}
-#endif
-
 	switch (mode) {
 	case TP_IC_CODE_RST:
 		ILI_INFO("TP IC Code RST \n");
 		ret = ili_ic_code_reset(OFF);
-		ilits->pll_clk_wakeup = false;
 		if (ret < 0)
 			ILI_ERR("IC Code reset failed\n");
 		break;
@@ -1012,18 +886,17 @@ int ili_reset_ctrl(int mode)
 		ret = ili_ic_whole_reset(OFF);
 		if (ret < 0)
 			ILI_ERR("IC whole reset failed\n");
-		ilits->pll_clk_wakeup = true;
 		break;
 	case TP_HW_RST_ONLY:
 		ILI_INFO("TP HW RST\n");
 		ili_tp_reset();
-		ilits->pll_clk_wakeup = true;
 		break;
 	default:
 		ILI_ERR("Unknown reset mode, %d\n", mode);
 		ret = -EINVAL;
 		break;
 	}
+
 	/*
 	 * Since OTP must be folloing with reset, except for code rest,
 	 * the stat of ice mode should be set as 0.
@@ -1031,9 +904,9 @@ int ili_reset_ctrl(int mode)
 	if (mode != TP_IC_CODE_RST)
 		atomic_set(&ilits->ice_stat, DISABLE);
 
-	if (ili_set_tp_data_len(DATA_FORMAT_DEMO, false, NULL) < 0)
-		ILI_ERR("Failed to set tp data length\n");
-
+	ilits->tp_data_format = DATA_FORMAT_DEMO;
+	ilits->tp_data_len = P5_X_DEMO_MODE_PACKET_LEN;
+	ilits->pll_clk_wakeup = true;
 	atomic_set(&ilits->tp_reset, END);
 	return ret;
 }
@@ -1158,6 +1031,7 @@ int ili_tddi_init(void)
 	spin_lock_init(&ilits->irq_spin);
 	init_completion(&ilits->esd_done);
 
+	atomic_set(&ilits->irq_stat, DISABLE);
 	atomic_set(&ilits->ice_stat, DISABLE);
 	atomic_set(&ilits->tp_reset, END);
 	atomic_set(&ilits->fw_stat, END);
@@ -1166,7 +1040,6 @@ int ili_tddi_init(void)
 	atomic_set(&ilits->cmd_int_check, DISABLE);
 	atomic_set(&ilits->esd_stat, END);
 	atomic_set(&ilits->tp_sw_mode, END);
-	atomic_set(&ilits->ignore_report, END);
 
 	ili_ic_init();
 	ilitek_tddi_wq_init();
@@ -1186,10 +1059,10 @@ int ili_tddi_init(void)
 	 * it might cause unknown problems if we disable ice mode without any
 	 * codes inside touch ic.
 	 */
-	if (ili_ice_mode_ctrl(ENABLE, OFF) < 0)
+	if (ili_ice_mode_ctrl(ENABLE, OFF) < 0) 
 		ILI_ERR("Failed to enable ice mode during ili_tddi_init\n");
 
-	if (ili_ic_dummy_check() < 0) {
+	if ( ili_ic_dummy_check() < 0 ){
 		ILI_ERR("Not found ilitek chip\n");
 		return -ENODEV;
 	}
@@ -1207,7 +1080,7 @@ int ili_tddi_init(void)
 	fw_boot_th = kthread_run(ili_fw_upgrade_handler, NULL, "ili_fw_boot");
 	if (fw_boot_th == (struct task_struct *)ERR_PTR) {
 		fw_boot_th = NULL;
-		/*WARN_ON(!fw_boot_th);*/
+		WARN_ON(!fw_boot_th);
 		ILI_ERR("Failed to create fw upgrade thread\n");
 	}
 #else
@@ -1223,7 +1096,6 @@ int ili_tddi_init(void)
 	ili_ic_get_fw_ver();
 	ili_ic_get_tp_info();
 	ili_ic_get_panel_info();
-	ili_set_tp_data_len(DATA_FORMAT_DEMO, false, NULL);
 
 #if (TDDI_INTERFACE == BUS_I2C)
 	ilits->info_from_hex = ENABLE;
@@ -1236,20 +1108,19 @@ int ili_tddi_init(void)
 	ilits->boot = true;
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0)
+#if(0)
+//flc
 	ilits->ws = wakeup_source_register("ili_wakelock");
-#else
-	ilits->ws = wakeup_source_register(ilits->dev, "ili_wakelock");
-#endif
 	if (!ilits->ws)
 		ILI_ERR("wakeup source request failed\n");
+#endif
 
 	ili_ic_edge_palm_para_init();
 
 	return 0;
 }
 
-void ili_dev_remove(bool flag)
+void ili_dev_remove(void)
 {
 	ILI_INFO("remove ilitek dev\n");
 
@@ -1275,8 +1146,7 @@ void ili_dev_remove(bool flag)
 
 	kfree(ilits->tr_buf);
 	kfree(ilits->gcoord);
-
-	ili_interface_dev_exit(ilits, flag);
+	ili_interface_dev_exit(ilits);
 }
 
 int ili_dev_init(struct ilitek_hwif_info *hwif)

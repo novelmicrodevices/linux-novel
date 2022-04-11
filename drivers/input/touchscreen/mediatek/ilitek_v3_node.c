@@ -25,7 +25,7 @@
 #define USER_STR_BUFF		PAGE_SIZE
 #define IOCTL_I2C_BUFF		PAGE_SIZE
 #define ILITEK_IOCTL_MAGIC	100
-#define ILITEK_IOCTL_MAXNR	31
+#define ILITEK_IOCTL_MAXNR	27
 
 #define ILITEK_IOCTL_I2C_WRITE_DATA		_IOWR(ILITEK_IOCTL_MAGIC, 0, u8*)
 #define ILITEK_IOCTL_I2C_SET_WRITE_LENGTH	_IOWR(ILITEK_IOCTL_MAGIC, 1, int)
@@ -61,12 +61,6 @@
 #define ILITEK_IOCTL_WRAPPER_RW 		_IOWR(ILITEK_IOCTL_MAGIC, 25, u8*)
 #define ILITEK_IOCTL_DDI_WRITE	 		_IOWR(ILITEK_IOCTL_MAGIC, 26, u8*)
 #define ILITEK_IOCTL_DDI_READ	 		_IOWR(ILITEK_IOCTL_MAGIC, 27, u8*)
-#define ILITEK_IOCTL_REPORT_RATE_SET	 	_IOWR(ILITEK_IOCTL_MAGIC, 28, u8*)
-#define ILITEK_IOCTL_REPORT_RATE_GET	 	_IOWR(ILITEK_IOCTL_MAGIC, 29, u8*)
-#define ILITEK_IOCTL_MP_LCM_OFF_ENV		_IOWR(ILITEK_IOCTL_MAGIC, 30, u8*)
-#define ILITEK_IOCTL_RELEASE_TOUCH		_IOWR(ILITEK_IOCTL_MAGIC, 31, u8*)
-
-
 
 #ifdef CONFIG_COMPAT
 #define ILITEK_COMPAT_IOCTL_I2C_WRITE_DATA		_IOWR(ILITEK_IOCTL_MAGIC, 0, compat_uptr_t)
@@ -103,11 +97,6 @@
 #define ILITEK_COMPAT_IOCTL_WRAPPER_RW			_IOWR(ILITEK_IOCTL_MAGIC, 25, compat_uptr_t)
 #define ILITEK_COMPAT_IOCTL_DDI_WRITE	 		_IOWR(ILITEK_IOCTL_MAGIC, 26, compat_uptr_t)
 #define ILITEK_COMPAT_IOCTL_DDI_READ	 		_IOWR(ILITEK_IOCTL_MAGIC, 27, compat_uptr_t)
-#define ILITEK_COMPAT_IOCTL_REPORT_RATE_SET 		_IOWR(ILITEK_IOCTL_MAGIC, 28, compat_uptr_t)
-#define ILITEK_COMPAT_IOCTL_REPORT_RATE_GET 		_IOWR(ILITEK_IOCTL_MAGIC, 29, compat_uptr_t)
-#define ILITEK_COMPAT_IOCTL_MP_LCM_OFF_ENV 		_IOWR(ILITEK_IOCTL_MAGIC, 30, compat_uptr_t)
-#define ILITEK_COMPAT_IOCTL_RELEASE_TOUCH		_IOWR(ILITEK_IOCTL_MAGIC, 31, compat_uptr_t)
-
 #endif
 
 struct record_state {
@@ -268,10 +257,10 @@ static int ilitek_debug_node_buff_control(bool open)
 
 out:
 	if (!ERR_ALLOC_MEM(ilits->dbl)) {
-		for (i = 0; i < TR_BUF_LIST_SIZE; i++) {
-			ilits->dbl[i].mark = false;
-			ipio_kfree((void **)&ilits->dbl[i].data);
-		}
+	for (i = 0; i < TR_BUF_LIST_SIZE; i++) {
+		ilits->dbl[i].mark = false;
+		ipio_kfree((void **)&ilits->dbl[i].data);
+	}
 	}
 	ipio_kfree((void **)&ilits->dbl);
 	return ret;
@@ -359,7 +348,7 @@ static int dev_mkdir(char *name, umode_t mode)
 	ILI_INFO("mkdir: %s\n", name);
 	fs = get_fs();
 	set_fs(KERNEL_DS);
-	err = sys_mkdir(name, mode);
+	err = ksys_mkdir(name, mode);
 	set_fs(fs);
 
 	return err;
@@ -428,7 +417,7 @@ static ssize_t ilitek_proc_get_delta_data_read(struct file *pFile, char __user *
 	for (i = 4, index = 0; i < row * col * 2 + 4; i += 2, index++)
 		delta[index] = (data[i] << 8) + data[i + 1];
 
-	len = snprintf(g_user_buf, PAGE_SIZE - len, "======== Deltadata ========\n");
+	len = snprintf(g_user_buf + size, PAGE_SIZE - len, "======== Deltadata ========\n");
 	ILI_INFO("======== Deltadata ========\n");
 
 	len += snprintf(g_user_buf + len, PAGE_SIZE - len,
@@ -700,7 +689,7 @@ static ssize_t ilitek_proc_debug_switch_read(struct file *pFile, char __user *bu
 
 	memset(g_user_buf, 0, USER_STR_BUFF * sizeof(unsigned char));
 
-	mutex_lock(&ilits->debug_read_mutex);
+	mutex_lock(&ilits->debug_mutex);
 
 	open = !ilits->dnp;
 
@@ -712,7 +701,7 @@ static ssize_t ilitek_proc_debug_switch_read(struct file *pFile, char __user *bu
 	if (copy_to_user(buff, g_user_buf, size))
 		ILI_ERR("Failed to copy data to user space\n");
 
-	mutex_unlock(&ilits->debug_read_mutex);
+	mutex_unlock(&ilits->debug_mutex);
 	return size;
 }
 
@@ -740,7 +729,7 @@ static ssize_t ilitek_proc_debug_message_read(struct file *filp, char __user *bu
 
 	mutex_lock(&ilits->debug_read_mutex);
 	ILI_DBG("f_count= %d, index = %d, mark = %d\n", ilits->dbf, ilits->odi, ilits->dbl[ilits->odi].mark);
-	if (!wait_event_interruptible_timeout(ilits->inq, ilits->dbl[ilits->odi].mark, msecs_to_jiffies(ilits->wait_int_timeout))) {
+	if (!wait_event_interruptible_timeout(ilits->inq, ilits->dbl[ilits->odi].mark, msecs_to_jiffies(3000))) {
 		ILI_ERR("WARNING ! there's no data received.\n");
 		mutex_unlock(&ilits->debug_read_mutex);
 		*pos = send_data_len;
@@ -759,11 +748,6 @@ static ssize_t ilitek_proc_debug_message_read(struct file *filp, char __user *bu
 	if (ilits->dbl[ilits->odi].mark) {
 		if (ilits->dbl[ilits->odi].data[0] == P5_X_DEMO_PACKET_ID) {
 			need_read_data_len = 43;
-		} else if (ilits->dbl[ilits->odi].data[0] == P5_X_DEMO_HIGH_RESOLUTION_PACKET_ID) {
-			need_read_data_len = P5_X_DEMO_MODE_PACKET_LEN_HIGH_RESOLUTION;
-			if (ilits->rib.nCustomerType != POSITION_CUSTOMER_TYPE_OFF) {
-				need_read_data_len += P5_X_CUSTOMER_LENGTH;
-			}
 		} else if (ilits->dbl[ilits->odi].data[0] == P5_X_I2CUART_PACKET_ID) {
 			type = ilits->dbl[ilits->odi].data[3] & 0x0F;
 
@@ -778,11 +762,6 @@ static ssize_t ilitek_proc_debug_message_read(struct file *filp, char __user *bu
 			}
 			need_read_data_len = data_count * one_data_bytes + 1 + 5;
 		} else if (ilits->dbl[ilits->odi].data[0] == P5_X_DEBUG_PACKET_ID || ilits->dbl[ilits->odi].data[0] == P5_X_DEBUG_LITE_PACKET_ID) {
-			send_data_len = 0;	/* ilits->dbl[0][1] - 2; */
-			need_read_data_len = TR_BUF_SIZE - 8;
-		} else if (ilits->dbl[ilits->odi].data[0] == P5_X_I2CUART_PACKET_ID) {
-			need_read_data_len = P5_X_DEMO_MODE_PACKET_LEN+P5_X_DEMO_MODE_AXIS_LEN+P5_X_DEMO_MODE_STATE_INFO;
-		}  else if (ilits->dbl[ilits->odi].data[0] == P5_X_DEBUG_HIGH_RESOLUTION_PACKET_ID) {
 			send_data_len = 0;	/* ilits->dbl[0][1] - 2; */
 			need_read_data_len = TR_BUF_SIZE - 8;
 		}
@@ -1143,7 +1122,7 @@ static ssize_t ilitek_proc_fw_process_read(struct file *filp, char __user *buff,
 
 static ssize_t ilitek_node_fw_upgrade_read(struct file *filp, char __user *buff, size_t size, loff_t *pos)
 {
-	int ret = 0, len = 0;
+	int ret = 0, len = 2;
 	bool esd_en = ilits->wq_esd_ctrl, bat_en = ilits->wq_bat_ctrl;
 
 	if (*pos != 0)
@@ -1230,61 +1209,11 @@ static ssize_t ilitek_proc_debug_level_read(struct file *filp, char __user *buff
 	return size;
 }
 
-static ssize_t ilitek_proc_sram_test_info(struct file *filp, char __user *buff, size_t size, loff_t *pos)
-{
-	int len = 0, ret = 0;
-	if (*pos != 0)
-		return 0;
-
-	memset(g_user_buf, 0, USER_STR_BUFF * sizeof(unsigned char));
-
-	ret = ili_reset_ctrl(TP_IC_WHOLE_RST);
-	if (ret < 0) {
-		ILI_ERR("TP_IC_WHOLE_RST Failed, ret = %d\n", ret);
-		len += snprintf(g_user_buf + len, USER_STR_BUFF - len, "%s\n", "TP_IC_WHOLE_RST Failed");
-	}
-
-	mdelay(30);
-
-	ret = ili_ice_mode_ctrl(ENABLE, OFF);
-	if (ret < 0) {
-		ILI_ERR("Failed to disable ICE mode, ret = %d\n", ret);
-		len += snprintf(g_user_buf + len, USER_STR_BUFF - len, "%s\n", "Failed to disable ICE mode");
-	}
-
-	ret = ili_tddi_ic_sram_test();
-	if (ret < 0) {
-		len += snprintf(g_user_buf + len, USER_STR_BUFF - len, "%s\n", "SRAM TEST Failed");
-	} else {
-		len += snprintf(g_user_buf + len, USER_STR_BUFF - len, "%s\n", "SRAM TEST Pass");
-	}
-
-	ret = ili_reset_ctrl(TP_IC_WHOLE_RST);
-	if (ret < 0) {
-		ILI_ERR("TP_IC_WHOLE_RST Failed, ret = %d\n", ret);
-		len += snprintf(g_user_buf + len, USER_STR_BUFF - len, "%s\n", "TP_IC_WHOLE_RST Failed");
-	}
-
-	mdelay(50);
-
-	ret = ili_fw_upgrade_handler(NULL);
-	if (ret < 0) {
-		ILI_ERR("fw upgrade Failed, ret = %d\n", ret);
-		len += snprintf(g_user_buf + len, USER_STR_BUFF - len, "%s\n", "fw upgrade Failed");
-	}
-
-	if (copy_to_user((char *)buff, g_user_buf, len))
-		ILI_ERR("Failed to copy data to user space\n");
-
-	*pos += len;
-	return len;
-}
-
 int ili_get_tp_recore_ctrl(int data)
 {
 	int ret = 0;
 
-	switch ((int)data) {
+	switch((int)data) {
 
 	case ENABLE_RECORD:
 		ILI_INFO("recore enable");
@@ -1342,7 +1271,7 @@ int ili_get_tp_recore_data(bool mcu)
 	fcnt = buf[5];
 	record_case = buf[6];
 	ipio_memcpy(&record_stat, &buf[7], 1, 1);
-	ILI_INFO("addr = 0x%x, len = %d, lndex = 0x%x, fram num = %d, record_case = 0x%x\n",
+	ILI_INFO("addr = 0x%x, len = %d, lndex = 0x%d, fram num = %d, record_case = 0x%x\n",
 		addr, len, index, fcnt, record_case);
 	ili_dump_data(buf, 8, sizeof(buf), 0, "all record bytes");
 
@@ -1351,7 +1280,7 @@ int ili_get_tp_recore_data(bool mcu)
 		ILI_ERR("Failed to allocate packet memory, %ld\n", PTR_ERR(raw));
 		return -1;
 	}
-	ptr = (u32 *)raw;
+	ptr = (u32*)raw;
 
 	if (!ice)
 		ili_ice_mode_ctrl(ENABLE, ON);
@@ -1372,12 +1301,12 @@ int ili_get_tp_recore_data(bool mcu)
 	}
 
 	frame_len = (len / (fcnt * 2));
-	for (i = 0; i < fcnt; i++) {
+	for (i = 0; i < fcnt; i ++) {
 		raw_ptr = raw + (index * frame_len);
 
 		ili_dump_data(raw_ptr, 16, frame_len, ilits->xch_num, "recore_data");
 		index--;
-		if (index < 0)
+		if(index < 0)
 			index = fcnt - 1;
 	}
 
@@ -1437,7 +1366,7 @@ void ili_gesture_fail_reason(bool enable)
 
 }
 
-int ili_tp_data_mode_ctrl(u8 *cmd)
+int ili_tp_data_mode_ctrl(u8* cmd)
 {
 	int ret = 0;
 	switch (cmd[0]) {
@@ -1448,16 +1377,9 @@ int ili_tp_data_mode_ctrl(u8 *cmd)
 				ret = -ENOTTY;
 			}
 		} else {
-			if (ilits->actual_tp_mode == P5_X_FW_TEST_MODE) {
-				if (ili_switch_tp_mode(P5_X_FW_AP_MODE) < 0) {
-					ILI_ERR("Failed to switch demo mode\n");
-					ret = -ENOTTY;
-				}
-			} else {
-				if (ili_set_tp_data_len(DATA_FORMAT_DEMO, false, NULL) < 0) {
-					ILI_ERR("Failed to switch demo mode\n");
-					ret = -ENOTTY;
-				}
+			if (ili_set_tp_data_len(DATA_FORMAT_DEMO, false, NULL) < 0) {
+				ILI_ERR("Failed to switch demo mode\n");
+				ret = -ENOTTY;
 			}
 		}
 		break;
@@ -1470,7 +1392,7 @@ int ili_tp_data_mode_ctrl(u8 *cmd)
 	case DEBUG_MODE:
 		if (!ilits->tp_suspend && (ilits->actual_tp_mode != P5_X_FW_AP_MODE)) {
 			if (ili_switch_tp_mode(P5_X_FW_AP_MODE) < 0) {
-				ILI_ERR("Failed to switch Debug mode\n");
+				ILI_ERR("Failed to switch demo mode\n");
 				ret = -ENOTTY;
 				break;
 			}
@@ -1513,30 +1435,6 @@ int ili_tp_data_mode_ctrl(u8 *cmd)
 	ilits->tp_data_mode = cmd[0];
 
 	return ret;
-}
-
-int ili_mp_lcm_off_env_ctrl(u8 lcm_on)
-{
-	int ret = 0;
-	ILI_INFO("set mp lcm off env to %d\n", lcm_on);
-	if (lcm_on == ENABLE) {
-		if (ENABLE_WQ_ESD)
-			ilits->esd_func_ctrl = ENABLE;
-
-		/* enable esd recovery */
-		ili_wq_ctrl(WQ_ESD, ENABLE);
-	} else {
-		/* disable esd recovery */
-		ili_wq_ctrl(WQ_ESD, DISABLE);
-
-		if (ENABLE_WQ_ESD)
-			ilits->esd_func_ctrl = DISABLE;
-
-		/* enable gesture */
-		ilits->gesture = ENABLE;
-	}
-	return ret;
-
 }
 
 static ssize_t ilitek_node_ioctl_write(struct file *filp, const char *buff, size_t size, loff_t *pos)
@@ -1822,7 +1720,7 @@ static ssize_t ilitek_node_ioctl_write(struct file *filp, const char *buff, size
 	} else if (strncmp(cmd, "ges_sym", strlen(cmd)) == 0) {
 		struct gesture_symbol *ptr_sym = &ilits->ges_sym;
 		u8 *ptr;
-		ptr = (u8 *) ptr_sym;
+		ptr = (u8*) ptr_sym;
 		ptr[0] = data[1];
 		ptr[1] = data[2];
 		ptr[2] = data[3];
@@ -1845,10 +1743,10 @@ static ssize_t ilitek_node_ioctl_write(struct file *filp, const char *buff, size
 			ilits->edge_palm_para[i * 2 + 3] = data[i + 1] & 0xFF;
 		}
 		ilits->edge_palm_para[30] = ili_calc_packet_checksum(ilits->edge_palm_para
-			, P5_X_EDGE_PALM_PARA_LENGTH - 1);
+			, P5_X_EDGE_PALM_PARA_LENGTH -1);
 
 		for (i = 0; i < P5_X_EDGE_PALM_PARA_LENGTH; i++) {
-			ILI_INFO("edge_palm_para[%d] = 0x%2x\n", i, ilits->edge_palm_para[i]);
+			ILI_INFO("edge_palm_para[%d] = 0x%2x\n",i ,ilits->edge_palm_para[i]);
 		}
 
 		ili_ic_send_edge_palm_para();
@@ -1863,24 +1761,9 @@ static ssize_t ilitek_node_ioctl_write(struct file *filp, const char *buff, size
 		ILI_INFO("knuckle = %s\n", ilits->knuckle ? "ENABLE" : "DISABLE");
 #endif
 	} else if (strncmp(cmd, "proxfacemode", strlen(cmd)) == 0) {
-		if (data[1] != 0x00) {
-			ilits->prox_face_mode = true;
-			if (ili_ic_func_ctrl("proximity", data[1]) < 0) {
-				ILI_ERR("Write proximity cmd failed\n");
-			}
-		} else {
-			ilits->prox_face_mode = false;
-			if (ili_ic_func_ctrl("proximity", 0x00) < 0) {
-				ILI_ERR("Write proximity cmd failed\n");
-			}
-		}
+		ilits->prox_face_mode = !ilits->prox_face_mode;
 		ilits->power_status = true;
-		ILI_INFO("switch proximity face mode = %s, level = %d\n", (ilits->prox_face_mode ? "ON" : "OFF"), data[1]);
-	} else if (strncmp(cmd, "mp_lcm_off_env", strlen(cmd)) == 0) {
-		ili_mp_lcm_off_env_ctrl(data[1]);
-	} else if (strncmp(cmd, "releasetouch", strlen(cmd)) == 0) {
-		ILI_INFO("ioctl: release all touch\n");
-		ili_touch_release_all_point();
+		ILI_INFO("switch proximity face mode = %s\n", (ilits->prox_face_mode ? "ON" : "OFF"));//prox_face_mode
 	} else {
 		ILI_ERR("Unknown command\n");
 		size = -1;
@@ -2015,18 +1898,6 @@ static long ilitek_node_compat_ioctl(struct file *filp, unsigned int cmd, unsign
 	case ILITEK_COMPAT_IOCTL_DDI_READ:
 		ILI_DBG("compat_ioctl: convert ddi read\n");
 		ret = filp->f_op->unlocked_ioctl(filp, ILITEK_IOCTL_DDI_READ, (unsigned long)compat_ptr(arg));
-		return ret;
-	case ILITEK_COMPAT_IOCTL_REPORT_RATE_SET:
-		ILI_DBG("compat_ioctl: convert report rate set\n");
-		ret = filp->f_op->unlocked_ioctl(filp, ILITEK_IOCTL_REPORT_RATE_SET, (unsigned long)compat_ptr(arg));
-		return ret;
-	case ILITEK_COMPAT_IOCTL_MP_LCM_OFF_ENV:
-		ILI_DBG("compat_ioctl: mp lcm env\n");
-		ret = filp->f_op->unlocked_ioctl(filp, ILITEK_IOCTL_MP_LCM_OFF_ENV, (unsigned long)compat_ptr(arg));
-		return ret;
-	case ILITEK_COMPAT_IOCTL_RELEASE_TOUCH:
-		ILI_DBG("compat_ioctl: release touch\n");
-		ret = filp->f_op->unlocked_ioctl(filp, ILITEK_IOCTL_RELEASE_TOUCH, (unsigned long)compat_ptr(arg));
 		return ret;
 	default:
 		ILI_ERR("no ioctl cmd, return ilitek_node_ioctl\n");
@@ -2212,7 +2083,7 @@ static long ilitek_node_ioctl(struct file *filp, unsigned int cmd, unsigned long
 		szBuf[2] = (ilits->chip->core_ver >> 8) & 0xFF;
 		szBuf[1] = (ilits->chip->core_ver >> 16) & 0xFF;
 		szBuf[0] = ilits->chip->core_ver >> 24;
-		ILI_DBG("Core version = %d.%d.%d.%d, length = %d\n",
+		ILI_DBG("Core version = %d.%d.%d.%d, length = %d\n", 
 			szBuf[0], szBuf[1], szBuf[2], szBuf[3], ilits->protocol->core_ver_len);
 
 		if (copy_to_user((u8 *) arg, szBuf, 4)) {
@@ -2281,7 +2152,7 @@ static long ilitek_node_ioctl(struct file *filp, unsigned int cmd, unsigned long
 		break;
 	/* It works for host downloado only */
 	case ILITEK_IOCTL_ICE_MODE_SWITCH:
-		if (copy_from_user(szBuf, (u8 *) arg, 2)) {
+		if (copy_from_user(szBuf, (u8 *) arg, 1)) {
 			ILI_ERR("Failed to copy data from user space\n");
 			ret = -ENOTTY;
 			break;
@@ -2329,9 +2200,8 @@ static long ilitek_node_ioctl(struct file *filp, unsigned int cmd, unsigned long
 		ILI_DBG("ioctl: get panel resolution\n");
 		id_to_user[0] = ilits->panel_wid;
 		id_to_user[1] = ilits->panel_hei;
-		id_to_user[2] = (ilits->trans_xy) ? 0x1 : 0x0;
 
-		if (copy_to_user((u32 *) arg, id_to_user, sizeof(u32) * 3)) {
+		if (copy_to_user((u32 *) arg, id_to_user, sizeof(u32) * 2)) {
 			ILI_ERR("Failed to copy driver ver to user space\n");
 			ret = -ENOTTY;
 		}
@@ -2397,7 +2267,7 @@ static long ilitek_node_ioctl(struct file *filp, unsigned int cmd, unsigned long
 			i2c_irq = OFF;
 			spi_irq = OFF;
 		} else {
-			i2c_irq = OFF;
+			i2c_irq= OFF;
 			spi_irq = (wrap_rlen > 0 ? ON : OFF);
 		}
 
@@ -2434,39 +2304,6 @@ static long ilitek_node_ioctl(struct file *filp, unsigned int cmd, unsigned long
 			ILI_ERR("Failed to copy data to user space\n");
 			ret = -ENOTTY;
 		}
-		break;
-	case ILITEK_IOCTL_REPORT_RATE_SET:
-		if (copy_from_user(szBuf, (u8 *) arg, 2)) {
-			ILI_ERR("Failed to copy data from user space\n");
-			ret = -ENOTTY;
-			break;
-		}
-		ILI_INFO("ioctl: set report rate mode = %x\n", szBuf[0]);
-		if (ili_ic_report_rate_set(szBuf[0]) < 0) {
-			ILI_ERR("Failed to set report rate\n");
-			ret = -ENOTTY;
-		}
-
-		break;
-	case ILITEK_IOCTL_REPORT_RATE_GET:
-
-		szBuf[0] = ili_ic_report_rate_get();
-		if (copy_to_user((u8 *) arg, szBuf, 1)) {
-			ILI_ERR("Failed to copy data to user space\n");
-			ret = -ENOTTY;
-		}
-		break;
-	case ILITEK_IOCTL_MP_LCM_OFF_ENV:
-		if (copy_from_user(szBuf, (u8 *) arg, 1)) {
-			ILI_ERR("Failed to copy data from user space\n");
-			ret = -ENOTTY;
-			break;
-		}
-		ili_mp_lcm_off_env_ctrl(szBuf[0]);
-		break;
-	case ILITEK_IOCTL_RELEASE_TOUCH:
-		ILI_INFO("ioctl: release all touch\n");
-		ili_touch_release_all_point();
 		break;
 	default:
 		ret = -ENOTTY;
@@ -2561,10 +2398,6 @@ static struct file_operations proc_debug_level_fops = {
 	.read = ilitek_proc_debug_level_read,
 };
 
-static struct file_operations proc_sram_test_fops = {
-	.read = ilitek_proc_sram_test_info,
-};
-
 proc_node iliproc[] = {
 	{"ioctl", NULL, &proc_ioctl_fops, false},
 	{"fw_process", NULL, &proc_fw_process_fops, false},
@@ -2581,7 +2414,6 @@ proc_node iliproc[] = {
 	{"rw_tp_reg", NULL, &proc_rw_tp_reg_fops, false},
 	{"ver_info", NULL, &proc_ver_info_fops, false},
 	{"change_list", NULL, &proc_change_list_fops, false},
-	{"sram_test", NULL, &proc_sram_test_fops, false},
 };
 
 #define NETLINK_USER 21

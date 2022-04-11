@@ -29,7 +29,6 @@
 void ili_tp_reset(void)
 {
 	ILI_INFO("edge delay = %d\n", ilits->rst_edge_delay);
-
 	/* Need accurate power sequence, do not change it to msleep */
 	gpio_direction_output(ilits->tp_rst, 1);
 	mdelay(1);
@@ -189,7 +188,6 @@ static int ilitek_plat_gpio_register(void)
 		ILI_ERR("Invalid INT gpio: %d\n", ilits->tp_int);
 		return -EBADR;
 	}
-
 	if (!gpio_is_valid(ilits->tp_rst)) {
 		ILI_ERR("Invalid RESET gpio: %d\n", ilits->tp_rst);
 		return -EBADR;
@@ -267,8 +265,7 @@ out:
 }
 
 static irqreturn_t ilitek_plat_isr_top_half(int irq, void *dev_id)
-{
-	if (irq != ilits->irq_num) {
+{	if (irq != ilits->irq_num) {
 		ILI_ERR("Incorrect irq number (%d)\n", irq);
 		return IRQ_NONE;
 	}
@@ -285,17 +282,16 @@ static irqreturn_t ilitek_plat_isr_top_half(int irq, void *dev_id)
 		return IRQ_HANDLED;
 	}
 
-	ILI_DBG("report: %d, rst: %d, fw: %d, switch: %d, mp: %d, sleep: %d, esd: %d, igr:%d\n",
+	ILI_DBG("report: %d, rst: %d, fw: %d, switch: %d, mp: %d, sleep: %d, esd: %d\n",
 			ilits->report,
 			atomic_read(&ilits->tp_reset),
 			atomic_read(&ilits->fw_stat),
 			atomic_read(&ilits->tp_sw_mode),
 			atomic_read(&ilits->mp_stat),
 			atomic_read(&ilits->tp_sleep),
-			atomic_read(&ilits->esd_stat),
-			atomic_read(&ilits->ignore_report));
+			atomic_read(&ilits->esd_stat));
 
-	if (!ilits->report || atomic_read(&ilits->tp_reset) ||  atomic_read(&ilits->ignore_report) ||
+	if (!ilits->report || atomic_read(&ilits->tp_reset) ||
 		atomic_read(&ilits->fw_stat) || atomic_read(&ilits->tp_sw_mode) ||
 		atomic_read(&ilits->mp_stat) || atomic_read(&ilits->tp_sleep) ||
 		atomic_read(&ilits->esd_stat)) {
@@ -386,8 +382,7 @@ static const struct attribute_group *ilitek_dev_attr_groups[] = {
 	NULL
 };
 
-int ili_sysfs_add_device(struct device *dev)
-{
+int ili_sysfs_add_device(struct device *dev) {
 	int ret = 0, i;
 
 	for (i = 0; ilitek_dev_attr_groups[i]; i++) {
@@ -403,8 +398,7 @@ int ili_sysfs_add_device(struct device *dev)
 	return ret;
 }
 
-int ili_sysfs_remove_device(struct device *dev)
-{
+int ili_sysfs_remove_device(struct device *dev) {
 	int i;
 
 	sysfs_remove_link(NULL, "touchscreen");
@@ -438,6 +432,7 @@ static int ilitek_plat_notifier_fb(struct notifier_block *self, unsigned long ev
 #endif
 #if CONFIG_PLAT_SPRD
 		case DRM_MODE_DPMS_OFF:
+		#if(0)
 #endif /* CONFIG_PLAT_SPRD */
 			if (TP_SUSPEND_PRIO) {
 #ifdef CONFIG_DRM_MSM
@@ -456,6 +451,7 @@ static int ilitek_plat_notifier_fb(struct notifier_block *self, unsigned long ev
 			}
 			if (ili_sleep_handler(TP_DEEP_SLEEP) < 0)
 				ILI_ERR("TP suspend failed\n");
+				#endif
 			break;
 #ifdef CONFIG_DRM_MSM
 		case MSM_DRM_BLANK_UNBLANK:
@@ -528,7 +524,72 @@ static void ilitek_plat_sleep_init(void)
 #endif
 }
 #endif
+#if CHARGER_NOTIFIER_CALLBACK
+#if KERNEL_VERSION(4, 1, 0) <= LINUX_VERSION_CODE
+/* add_for_charger_start */
+static int ilitek_charger_notifier_callback(struct notifier_block *nb,
+								unsigned long val, void *v) {
+	int ret = 0;
+	struct power_supply *psy = NULL;
+	union power_supply_propval prop;
 
+
+	if(ilits->fw_update_stat != 100)
+		return 0;
+
+	psy= power_supply_get_by_name("usb");
+	if (!psy) {
+		ILI_ERR("Couldn't get usbpsy\n");
+		return -EINVAL;
+	}
+	if (!strcmp(psy->desc->name, "usb")) {
+		if (psy && val == POWER_SUPPLY_PROP_STATUS) {
+			ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_PRESENT,&prop);
+			if (ret < 0) {
+				ILI_ERR("Couldn't get POWER_SUPPLY_PROP_ONLINE rc=%d\n", ret);
+				return ret;
+			} else {
+				if(ilits->usb_plug_status == 2)
+					ilits->usb_plug_status = prop.intval;
+				if(ilits->usb_plug_status != prop.intval) {
+					ILI_INFO("usb prop.intval =%d\n", prop.intval);
+					ilits->usb_plug_status = prop.intval;
+					if(!ilits->tp_suspend && (ilits->charger_notify_wq != NULL))
+						queue_work(ilits->charger_notify_wq,&ilits->update_charger);
+				}
+			}
+		}
+	}
+	return 0;
+}
+static void ilitek_update_charger(struct work_struct *work)
+{
+	int ret = 0;
+	mutex_lock(&ilits->touch_mutex);
+	ret = ili_ic_func_ctrl("plug", !ilits->usb_plug_status);// plug in
+	if(ret<0) {
+		ILI_ERR("Write plug in failed\n");
+	}
+	mutex_unlock(&ilits->touch_mutex);
+}
+void ilitek_plat_charger_init(void)
+{
+	int ret = 0;
+	ilits->usb_plug_status = 2;
+	ilits->charger_notify_wq = create_singlethread_workqueue("ili_charger_wq");
+	if (!ilits->charger_notify_wq) {
+		ILI_ERR("allocate ili_charger_notify_wq failed\n");
+		return;
+	}
+	INIT_WORK(&ilits->update_charger, ilitek_update_charger);
+	ilits->notifier_charger.notifier_call = ilitek_charger_notifier_callback;
+	ret = power_supply_reg_notifier(&ilits->notifier_charger);
+	if (ret < 0)
+		ILI_ERR("power_supply_reg_notifier failed\n");
+}
+/* add_for_charger_end */
+#endif
+#endif
 static int ilitek_plat_probe(void)
 {
 	ILI_INFO("platform probe\n");
@@ -545,7 +606,6 @@ static int ilitek_plat_probe(void)
 	if (ili_tddi_init() < 0) {
 		ILI_ERR("ILITEK Driver probe failed\n");
 		ili_irq_unregister();
-		ili_dev_remove(DISABLE);
 		return -ENODEV;
 	}
 #if SPRD_SYSFS_SUSPEND_RESUME
@@ -572,11 +632,7 @@ static int ilitek_tp_pm_suspend(struct device *dev)
 {
 	ILI_INFO("CALL BACK TP PM SUSPEND");
 	ilits->pm_suspend = true;
-#if KERNEL_VERSION(3, 12, 0) >= LINUX_VERSION_CODE
-	ilits->pm_completion.done = 0;
-#else
 	reinit_completion(&ilits->pm_completion);
-#endif
 	return 0;
 }
 
@@ -594,7 +650,7 @@ static int ilitek_plat_remove(void)
 #if SPRD_SYSFS_SUSPEND_RESUME
 	ili_sysfs_remove_device(ilits->dev);
 #endif
-	ili_dev_remove(ENABLE);
+	ili_dev_remove();
 	return 0;
 }
 
@@ -639,7 +695,7 @@ static int __init ilitek_plat_dev_init(void)
 static void __exit ilitek_plat_dev_exit(void)
 {
 	ILI_INFO("remove plat dev\n");
-	ili_dev_remove(ENABLE);
+	ili_dev_remove();
 }
 
 module_init(ilitek_plat_dev_init);

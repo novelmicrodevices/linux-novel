@@ -102,10 +102,10 @@
 #include "sync_write.h"
 #endif
 
-#define DRIVER_VERSION			"3.0.6.0.210202"
+#define DRIVER_VERSION			"3.0.4.0.200731"
 
 /* Options */
-#define TDDI_INTERFACE			BUS_SPI /* BUS_I2C(0x18) or BUS_SPI(0x1C) */
+#define TDDI_INTERFACE			BUS_I2C /* BUS_I2C(0x18) or BUS_SPI(0x1C) */
 #define VDD_VOLTAGE			1800000
 #define VCC_VOLTAGE			1800000
 #define SPI_CLK                         9      /* follow by clk list */
@@ -133,13 +133,7 @@
 #define PLL_CLK_WAKEUP_TP_RESUME	DISABLE
 #define CHARGER_NOTIFIER_CALLBACK	DISABLE
 #define ENABLE_EDGE_PALM_PARA		DISABLE
-#define MULTI_REPORT_RATE		DISABLE
-#define ENGINEER_FLOW			ENABLE
-/*Proximity mode options*/
-#define PROXIMITY_NULL			0
-#define PROXIMITY_SUSPEND_RESUME	1
-#define PROXIMITY_BACKLIGHT		2
-#define PROXIMITY_BY_FW_MODE	(PROXIMITY_NULL)
+#define PROXIMITY_BY_FW			DISABLE
 
 /*if current interface is spi, must to hostdownload */
 #if (TDDI_INTERFACE == BUS_SPI)
@@ -152,22 +146,40 @@
 #define CONFIG_PLAT_SPRD		DISABLE
 #define I2C_DMA_TRANSFER		DISABLE
 #define SPI_DMA_TRANSFER_SPLIT		DISABLE
-#define SPI_DMA_TRANSFER_SPLIT_OLD  DISABLE
 #define SPRD_SYSFS_SUSPEND_RESUME	DISABLE
 
 /* Path */
 #define DEBUG_DATA_FILE_SIZE		(10*K)
-#define DEBUG_DATA_FILE_PATH		"/sdcard/ILITEK_log.csv"
-#define CSV_LCM_ON_PATH			"/sdcard/ilitek_mp_lcm_on_log"
-#define CSV_LCM_OFF_PATH		"/sdcard/ilitek_mp_lcm_off_log"
+#define DEBUG_DATA_FILE_PATH		"/tmp/ILITEK_log.csv"
+#define CSV_LCM_ON_PATH		"/tmp/ilitek_mp_lcm_on_log"
+#define CSV_LCM_OFF_PATH		"/tmp/ilitek_mp_lcm_off_log"
 #define POWER_STATUS_PATH		"/sys/class/power_supply/battery/status"
-#define DUMP_FLASH_PATH			"/sdcard/flash_dump"
-#define DUMP_IRAM_PATH			"/sdcard/iram_dump"
+#define DUMP_FLASH_PATH		"/tmp/flash_dump"
+#define DUMP_IRAM_PATH			"/tmp/iram_dump"
 
 /* Debug messages */
 #define DEBUG_NONE	0
 #define DEBUG_ALL	1
 #define DEBUG_OUTPUT	DEBUG_NONE
+extern bool debug_en;
+
+#if(0)
+#define ILI_INFO(fmt, arg...)						\
+({									\
+	pr_info("ILITEK: (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
+})									\
+
+#define ILI_ERR(fmt, arg...)						\
+({									\
+	pr_info("ILITEK: (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
+})									\
+
+#define ILI_DBG(fmt, arg...)						\
+do {									\
+	pr_info("ILITEK: (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
+} while (0)
+
+#else
 
 #define ILI_INFO(fmt, arg...)						\
 ({									\
@@ -176,15 +188,14 @@
 
 #define ILI_ERR(fmt, arg...)						\
 ({									\
-	pr_err("ILITEK: (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
 })									\
 
-extern bool debug_en;
 #define ILI_DBG(fmt, arg...)						\
 do {									\
 	if (debug_en)						\
 	pr_info("ILITEK: (%s, %d): " fmt, __func__, __LINE__, ##arg);	\
 } while (0)
+#endif
 
 #define ERR_ALLOC_MEM(X)	((IS_ERR(X) || X == NULL) ? 1 : 0)
 #define K			(1024)
@@ -389,23 +400,12 @@ enum TP_IC_TYPE {
 	ILI_Z,
 };
 
-#if MULTI_REPORT_RATE
-enum MULTI_REPORT_RATE_TYPE {
-	DDI120_TP120 = 0,
-	DDI60_TP120 = 1,
-	DDI90_TP180 = 2,
-	DDI120_TP240 = 3,
-	DDI144_TP144 = 4,
-	DDI90_TP120 = 5,
-};
-#endif
-
 typedef enum cmd_types{
     CMD_DISABLE = 0x00,
     CMD_ENABLE = 0x01,
     CMD_STATUS = 0x02,
     CMD_ROI_DATA = 0x03,
-} cmd_types;
+}cmd_types;
 
 struct gesture_symbol {
 	u8 double_tap                 :1;
@@ -437,8 +437,7 @@ struct report_info_block {
 	u8 nIsSPISLAVE		:1;
 	u8 nIsI2C		:1;
 	u8 nReserved00		:3;
-	u8 nReportResolutionMode:3;
-	u8 nCustomerType	:5;
+	u8 nReserved01		:8;
 	u8 nReserved02		:8;
 	u8 nReserved03		:8;
 };
@@ -457,8 +456,6 @@ struct report_info_block {
 /* define the range on space, don't change */
 #define TPD_HEIGHT				2048
 #define TPD_WIDTH				2048
-#define TPD_HIGH_RESOLUTION_HEIGHT		8192
-#define TPD_HIGH_RESOLUTION_WIDTH		8192
 
 /* Firmware upgrade */
 #define CORE_VER_1410				0x01040100
@@ -466,7 +463,7 @@ struct report_info_block {
 #define CORE_VER_1430				0x01040300
 #define CORE_VER_1460				0x01040600
 #define CORE_VER_1470				0x01040700
-#define MAX_HEX_FILE_SIZE			(256*K)
+#define MAX_HEX_FILE_SIZE			(160*K)
 #define ILI_FILE_HEADER				256
 #define DLM_START_ADDRESS			0x20610
 #define DLM_HEX_ADDRESS				0x10000
@@ -478,11 +475,7 @@ struct report_info_block {
 #define RSV_BK_END_ADDR				0x1E3FF
 #define FW_VER_ADDR				0xFFE0
 #define FW_BLOCK_INFO_NUM			17
-#if SPI_DMA_TRANSFER_SPLIT
 #define SPI_UPGRADE_LEN				2048
-#else
-#define SPI_UPGRADE_LEN				0
-#endif
 #define SPI_BUF_SIZE				MAX_HEX_FILE_SIZE
 #define INFO_HEX_ST_ADDR			0x4F
 #define INFO_MP_HEX_ADDR			0x1F
@@ -685,25 +678,25 @@ struct report_info_block {
 #define SPI_ESD_GESTURE_CORE146_PWD_ADDR		0x4005C
 #define I2C_ESD_GESTURE_CORE146_PWD_ADDR		0x4005C
 
-#define DOUBLE_TAP                                   	(ON)//BIT0
-#define ALPHABET_LINE_2_TOP                          	(ON)//BIT1
-#define ALPHABET_LINE_2_BOTTOM                   	(ON)//BIT2
-#define ALPHABET_LINE_2_LEFT                         	(ON)//BIT3
-#define ALPHABET_LINE_2_RIGHT                        	(ON)//BIT4
-#define ALPHABET_M					(ON)//BIT5
-#define ALPHABET_W					(ON)//BIT6
-#define ALPHABET_C					(ON)//BIT7
-#define ALPHABET_E					(ON)//BIT8
-#define ALPHABET_V					(ON)//BIT9
-#define ALPHABET_O					(ON)//BIT10
-#define ALPHABET_S					(ON)//BIT11
-#define ALPHABET_Z					(ON)//BIT12
-#define ALPHABET_V_DOWN					(ON)//BIT13
-#define ALPHABET_V_LEFT					(ON)//BIT14
-#define ALPHABET_V_RIGHT				(ON)//BIT15
-#define ALPHABET_TWO_LINE_2_BOTTOM			(ON)//BIT16
-#define ALPHABET_F					(ON)//BIT17
-#define ALPHABET_AT					(ON)//BIT18
+#define DOUBLE_TAP                                   	( ON )//BIT0
+#define ALPHABET_LINE_2_TOP                          	( ON )//BIT1
+#define ALPHABET_LINE_2_BOTTOM                   	( ON )//BIT2
+#define ALPHABET_LINE_2_LEFT                         	( ON )//BIT3
+#define ALPHABET_LINE_2_RIGHT                        	( ON )//BIT4
+#define ALPHABET_M					( ON )//BIT5
+#define ALPHABET_W					( ON )//BIT6
+#define ALPHABET_C					( ON )//BIT7
+#define ALPHABET_E					( ON )//BIT8
+#define ALPHABET_V					( ON )//BIT9
+#define ALPHABET_O					( ON )//BIT10
+#define ALPHABET_S					( ON )//BIT11
+#define ALPHABET_Z					( ON )//BIT12
+#define ALPHABET_V_DOWN					( ON )//BIT13
+#define ALPHABET_V_LEFT					( ON )//BIT14
+#define ALPHABET_V_RIGHT				( ON )//BIT15
+#define ALPHABET_TWO_LINE_2_BOTTOM			( ON )//BIT16
+#define ALPHABET_F					( ON )//BIT17
+#define ALPHABET_AT					( ON )//BIT18
 
 /* FW data format */
 #define DATA_FORMAT_DEMO_CMD				0x00
@@ -715,11 +708,7 @@ struct report_info_block {
 #define DATA_FORMAT_DEBUG_LITE_ROI_CMD			0x01
 #define DATA_FORMAT_DEBUG_LITE_WINDOW_CMD		0x02
 #define DATA_FORMAT_DEBUG_LITE_AREA_CMD			0x03
-#define P5_X_DEMO_MODE_PACKET_INFO_LEN			3
 #define P5_X_DEMO_MODE_PACKET_LEN			43
-#define P5_X_DEMO_MODE_PACKET_LEN_HIGH_RESOLUTION	72
-#define P5_X_DEMO_MODE_AXIS_LEN				50
-#define P5_X_DEMO_MODE_STATE_INFO			16
 #define P5_X_INFO_HEADER_LENGTH				3
 #define P5_X_INFO_CHECKSUM_LENGTH			1
 #define P5_X_DEMO_DEBUG_INFO_ID0_LENGTH			14
@@ -727,16 +716,11 @@ struct report_info_block {
 #define P5_X_TEST_MODE_PACKET_LENGTH			1180
 #define P5_X_GESTURE_NORMAL_LENGTH			8
 #define P5_X_GESTURE_INFO_LENGTH			170
-#define P5_X_GESTURE_INFO_LENGTH_HIGH_RESOLUTION	221
 #define P5_X_DEBUG_LITE_LENGTH				300
 #define P5_X_CORE_VER_THREE_LENGTH			5
 #define P5_X_CORE_VER_FOUR_LENGTH			6
 #define P5_X_EDGE_PALM_PARA_LENGTH			31
-#define P5_X_DEBUG_LOW_RESOLUTION_FINGER_DATA_LENGTH	35
-#define P5_X_DEBUG_HIGH_RESOLUTION_FINGER_DATA_LENGTH	45
-#define P5_X_5B_LOW_RESOLUTION_LENGTH			62
-#define P5_X_CUSTOMER_LENGTH				50
-#define P5_X_DEBUG_MODE_PACKET_INFO_LEN			4
+
 
 /* Protocol */
 #define PROTOCOL_VER_500				0x050000
@@ -755,7 +739,6 @@ struct report_info_block {
 #define P5_X_GET_PROTOCOL_VERSION			0x22
 #define P5_X_GET_CORE_VERSION				0x23
 #define P5_X_GET_CORE_VERSION_NEW			0x24
-#define P5_X_GET_REPORT_FORMAT				0x37
 #define P5_X_MODE_CONTROL				0xF0
 #define P5_X_SET_CDC_INIT				0xF1
 #define P5_X_GET_CDC_DATA				0xF2
@@ -771,9 +754,7 @@ struct report_info_block {
 #define P5_X_FW_DELTA_DATA_MODE				0x03
 #define P5_X_FW_RAW_DATA_MODE				0x08
 #define P5_X_DEMO_PACKET_ID				0x5A
-#define P5_X_DEMO_AXIS_PACKET_ID			0x5B
 #define P5_X_DEBUG_PACKET_ID				0xA7
-#define P5_X_DEBUG_AXIS_PACKET_ID			0xA8
 #define P5_X_TEST_PACKET_ID				0xF2
 #define P5_X_GESTURE_PACKET_ID				0xAA
 #define P5_X_GESTURE_FAIL_ID				0xAE
@@ -788,9 +769,7 @@ struct report_info_block {
 #define SPI_WRITE					0x82
 #define SPI_READ					0x83
 #define SPI_ACK						0xA3
-#define P5_X_DEMO_PROXIMITY_ID				0xBC
-#define P5_X_DEMO_HIGH_RESOLUTION_PACKET_ID		0x5B
-#define P5_X_DEBUG_HIGH_RESOLUTION_PACKET_ID		0xA8
+#define P5_X_DEMO_PROXUMITY_ID				0xBC
 
 /* Chips */
 #define ILI9881_CHIP					0x9881
@@ -798,7 +777,6 @@ struct report_info_block {
 #define ILI9881N_AA					0x98811700
 #define ILI9881O_AA					0x98811800
 #define ILI9882_CHIP				0x9882
-#define ILI9883_CHIP					0x9883
 #define TDDI_PID_ADDR					0x4009C
 #define TDDI_OTP_ID_ADDR				0x400A0
 #define TDDI_ANA_ID_ADDR				0x400A4
@@ -821,12 +799,6 @@ struct report_info_block {
 #define PAGE00_CMD11_SLEEPOUT             0x11
 #define PAGE00_CMD28_DISPLAYOFF           0x28
 #define PAGE00_CMD29_DISPLAYON            0x29
-
-/* Report Format Resolution */
-#define POSITION_LOW_RESOLUTION		0X00
-#define POSITION_HIGH_RESOLUTION	0x01
-#define POSITION_CUSTOMER_TYPE_ON	0x00
-#define POSITION_CUSTOMER_TYPE_OFF	0x1F
 
 struct ilitek_ts_data {
 	struct i2c_client *i2c;
@@ -920,7 +892,6 @@ struct ilitek_ts_data {
 	bool wq_ctrl;
 	bool wq_esd_ctrl;
 	bool wq_bat_ctrl;
-	bool esd_func_ctrl;
 
 	bool netlink;
 	bool report;
@@ -934,7 +905,6 @@ struct ilitek_ts_data {
 
 	u16 flash_mid;
 	u16 flash_devid;
-	u8 current_report_rate_mode;
 	int program_page;
 	int flash_sector;
 
@@ -969,7 +939,7 @@ struct ilitek_ts_data {
 	bool prox_face_mode;
 	bool power_status;
 	bool proxmity_face;
-	bool eng_flow;
+
 	/* module info */
 	int tp_module;
 	int md_fw_ili_size;
@@ -989,14 +959,13 @@ struct ilitek_ts_data {
 	atomic_t tp_sw_mode;
 	atomic_t cmd_int_check;
 	atomic_t esd_stat;
-	atomic_t ignore_report;
 
 	/* Event for driver test */
 	struct completion esd_done;
 
 	int (*spi_write_then_read)(struct spi_device *spi, const void *txbuf,
 				unsigned n_tx, void *rxbuf, unsigned n_rx);
-	int  (*wrapper)(u8 *wdata, u32 wlen, u8 *rdata, u32 rlen, bool spi_irq, bool i2c_irq);
+	int  (*wrapper)(u8* wdata, u32 wlen, u8* rdata, u32 rlen, bool spi_irq, bool i2c_irq);
 	int  (*mp_move_code)(void);
 	int  (*gesture_move_code)(int mode);
 	int  (*esd_recover)(void);
@@ -1016,12 +985,6 @@ struct ilitek_touch_info {
 	u16 x;
 	u16 y;
 	u16 pressure;
-};
-
-struct ilitek_axis_info {
-	s8 degree;
-	u16 width_major;
-	u16 width_minor;
 };
 
 struct gesture_coordinate {
@@ -1099,7 +1062,7 @@ struct ilitek_hwif_info {
 extern void ili_flash_dma_write(u32 start, u32 end, u32 len);
 extern void ili_flash_clear_dma(void);
 extern void ili_fw_read_flash_info(bool mcu);
-extern int ili_fw_read_hw_crc(u32 start, u32 end, u32 *flash_crc);
+extern u32 ili_fw_read_hw_crc(u32 start, u32 end, u32 *flash_crc);
 extern int ili_fw_read_flash(u32 start, u32 end, u8 *data, int len);
 extern int ili_fw_dump_iram_data(u32 start, u32 end, bool save, bool mcu);
 extern int ili_fw_dump_flash_data(u32 start, u32 end, bool user, bool mcu);
@@ -1146,16 +1109,12 @@ extern int ili_ic_get_protocl_ver(void);
 extern int ili_ic_get_fw_ver(void);
 extern int ili_ic_get_info(void);
 extern int ili_ic_dummy_check(void);
-extern int ili_ic_report_rate_set(u8 mode);
-extern int ili_ic_report_rate_get(void);
-extern int ili_ic_report_rate_register_set(void);
 extern int ili_ice_mode_bit_mask_write(u32 addr, u32 mask, u32 value);
 extern int ili_ice_mode_write(u32 addr, u32 data, int len);
 extern int ili_ice_mode_read(u32 addr, u32 *data, int len);
 extern int ili_ice_mode_ctrl(bool enable, bool mcu);
 extern void ili_ic_init(void);
 extern void ili_fw_uart_ctrl(u8 ctrl);
-extern int ili_tddi_ic_sram_test(void);
 #ifdef ROI
 extern int ili_read_knuckle_roi_data(void);
 extern int ili_config_get_knuckle_roi_status(void);
@@ -1168,7 +1127,7 @@ extern void ili_resume_by_ddi(void);
 extern int ili_proximity_far(int mode);
 extern int ili_proximity_near(int mode);
 extern int ili_switch_tp_mode(u8 data);
-extern int ili_set_tp_data_len(int format, bool send, u8 *data);
+extern int ili_set_tp_data_len(int format, bool send, u8* data);
 extern int ili_fw_upgrade_handler(void *data);
 extern int ili_wq_esd_i2c_check(void);
 extern int ili_wq_esd_spi_check(void);
@@ -1181,12 +1140,12 @@ extern int ili_sleep_handler(int mode);
 extern int ili_reset_ctrl(int mode);
 extern int ili_tddi_init(void);
 extern int ili_dev_init(struct ilitek_hwif_info *hwif);
-extern void ili_dev_remove(bool flag);
+extern void ili_dev_remove(void);
 
 /* Prototypes for i2c/spi interface */
 extern int ili_core_spi_setup(int num);
 extern int ili_interface_dev_init(struct ilitek_hwif_info *hwif);
-extern void ili_interface_dev_exit(struct ilitek_ts_data *ts, bool flag);
+extern void ili_interface_dev_exit(struct ilitek_ts_data *ts);
 extern int ili_spi_write_then_read_split(struct spi_device *spi,
 				const void *txbuf, unsigned n_tx,
 				void *rxbuf, unsigned n_rx);
@@ -1202,7 +1161,6 @@ extern void ili_irq_enable(void);
 extern void ili_tp_reset(void);
 extern void ili_irq_unregister(void);
 extern int ili_irq_register(int type);
-extern void ilitek_plat_charger_init(void);
 
 /* Prototypes for miscs */
 extern void ili_node_init(void);
@@ -1212,7 +1170,7 @@ extern void ili_netlink_reply_msg(void *raw, int size);
 extern int ili_katoi(char *str);
 extern int ili_str2hex(char *str);
 
-extern int ili_mp_read_write(u8 *wdata, u32 wlen, u8 *rdata, u32 rlen);
+extern int ili_mp_read_write(u8* wdata, u32 wlen, u8* rdata, u32 rlen);
 /* Prototypes for additional functionalities */
 extern void ili_gesture_fail_reason(bool enable);
 extern int ili_get_tp_recore_ctrl(int data);

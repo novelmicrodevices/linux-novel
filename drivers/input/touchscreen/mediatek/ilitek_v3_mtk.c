@@ -31,6 +31,11 @@
 
 extern struct tpd_device *tpd;
 
+static const struct of_device_id touch_of_match[] = {
+	{ .compatible = "mediatek,cap_touch-1", },
+	{},
+};
+
 void ili_tp_reset(void)
 {
 	ILI_INFO("edge delay = %d\n", ilits->rst_edge_delay);
@@ -251,17 +256,16 @@ static irqreturn_t ilitek_plat_isr_top_half(int irq, void *dev_id)
 		return IRQ_HANDLED;
 	}
 
-	ILI_DBG("report: %d, rst: %d, fw: %d, switch: %d, mp: %d, sleep: %d, esd: %d, igr:%d\n",
+	ILI_DBG("report: %d, rst: %d, fw: %d, switch: %d, mp: %d, sleep: %d, esd: %d\n",
 			ilits->report,
 			atomic_read(&ilits->tp_reset),
 			atomic_read(&ilits->fw_stat),
 			atomic_read(&ilits->tp_sw_mode),
 			atomic_read(&ilits->mp_stat),
 			atomic_read(&ilits->tp_sleep),
-			atomic_read(&ilits->esd_stat),
-			atomic_read(&ilits->ignore_report));
+			atomic_read(&ilits->esd_stat));
 
-	if (!ilits->report || atomic_read(&ilits->tp_reset) ||  atomic_read(&ilits->ignore_report) ||
+	if (!ilits->report || atomic_read(&ilits->tp_reset) ||
 		atomic_read(&ilits->fw_stat) || atomic_read(&ilits->tp_sw_mode) ||
 		atomic_read(&ilits->mp_stat) || atomic_read(&ilits->tp_sleep) ||
 		atomic_read(&ilits->esd_stat)) {
@@ -296,6 +300,7 @@ int ili_irq_register(int type)
 	struct device_node *node;
 
 	atomic_set(&ilits->irq_stat, DISABLE);
+
 
 	if (get_irq_pin == false) {
 		node = of_find_matching_node(NULL, touch_of_match);
@@ -368,20 +373,12 @@ static int ilitek_plat_probe(void)
 	if (ili_tddi_init() < 0) {
 		ILI_ERR("ILITEK Driver probe failed\n");
 		ili_irq_unregister();
-		ili_dev_remove(DISABLE);
 		return -ENODEV;
 	}
 	tpd_load_status = 1;
 	ilits->pm_suspend = false;
 	init_completion(&ilits->pm_completion);
 
-#if CHARGER_NOTIFIER_CALLBACK
-#if KERNEL_VERSION(4, 1, 0) <= LINUX_VERSION_CODE
-	/* add_for_charger_start */
-	ilitek_plat_charger_init();
-	/* add_for_charger_end */
-#endif
-#endif
 	ILI_INFO("ILITEK Driver loaded successfully!");
 	return 0;
 }
@@ -389,7 +386,7 @@ static int ilitek_plat_probe(void)
 static int ilitek_plat_remove(void)
 {
 	ILI_INFO("remove plat dev\n");
-	ili_dev_remove(ENABLE);
+	ili_dev_remove();
 	return 0;
 }
 
@@ -444,21 +441,29 @@ static int tpd_local_init(void)
 static struct tpd_driver_t tpd_device_driver = {
 	.tpd_device_name = TDDI_DEV_ID,
 	.tpd_local_init = tpd_local_init,
-	.suspend = tpd_suspend,
-	.resume = tpd_resume,
+	//.suspend = tpd_suspend,
+	//.resume = tpd_resume,
 };
 
 static int __init ilitek_plat_dev_init(void)
 {
 	int ret = 0;
-
-	ILI_INFO("ILITEK TP driver init for MTK\n");
+	int i;
+	for (i=0;i<20;i++) printk("-----------------------------------ILITEK TP driver init for MTK\n");
+	for (i=0;i<20;i++) ILI_ERR("Error Print Test\r\n");
 	tpd_get_dts_info();
 	ret = tpd_driver_add(&tpd_device_driver);
 	if (ret < 0) {
-		ILI_ERR("ILITEK add TP driver failed\n");
+		printk("ILITEK add TP driver failed\n");
 		tpd_driver_remove(&tpd_device_driver);
 		return -ENODEV;
+	}
+	else
+	{
+		printk("ILITEK add TP DRIVER SUCCESS $$$$$$$$$$$$$$$$$44\r\n");
+		//ilitek_plat_probe();
+		//tpd_local_init();
+	
 	}
 	return 0;
 }

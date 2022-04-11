@@ -358,7 +358,7 @@ static void ilitek_tddi_flash_write_enable(void)
 		ILI_ERR("Pull CS high failed\n");
 }
 
-int ili_fw_read_hw_crc(u32 start, u32 end, u32 *flash_crc)
+u32 ili_fw_read_hw_crc(u32 start, u32 end, u32 *flash_crc)
 {
 	int retry = 100;
 	u32 busy = 0;
@@ -600,17 +600,17 @@ static int ilitek_fw_check_ddi_chunk(u8 *pfw)
 	u32 start = 0x0, end = 0x0, len = 0x0;
 	bool hex_info = ilits->info_from_hex;
 
+	if (ili_ic_get_fw_ver() < 0) {
+		ILI_INFO("Failed to get fw ver, reading flash by dma instead\n");
+		goto dma;
+	}
+
 	if (!fbi[DDI].start || !fbi[DDI].end)
 		return UPDATE_PASS;
 
 	/* To make sure if flash has data. */
 	if (hex_info)
 		ilits->info_from_hex = DISABLE;
-
-	if (ili_ic_get_fw_ver() < 0) {
-		ILI_INFO("Failed to get fw ver, reading flash by dma instead\n");
-		goto dma;
-	}
 
 	/* Command for getting ddi info from firmware. */
 	cmd[0] = CMD_GET_FLASH_DATA;		//cmd
@@ -641,7 +641,7 @@ static int ilitek_fw_check_ddi_chunk(u8 *pfw)
 		ILI_ERR("Failed to read mp data block from fw\n");
 		goto dma;
 	}
-	ipio_memcpy(&pfw[start], fw_flash_tmp + 6, DDI_RSV_BK_SIZE, MAX_HEX_FILE_SIZE - start);
+	ipio_memcpy(&pfw[start], fw_flash_tmp + 6, DDI_RSV_BK_SIZE, MAX_HEX_FILE_SIZE- start);
 
 	goto out;
 
@@ -696,7 +696,6 @@ static int ilitek_tddi_flash_fw_crc_check(u8 *pfw, bool check_fw_ver)
 	u32 start_addr = 0, end_addr = 0;
 	u32 hw_crc = 0;
 	u32 flash_crc_cb = 0, hex_crc = 0;
-	bool hex_info = ilits->info_from_hex;
 
 	/* Check Flash and HW CRC */
 	for (i = 0; i < FW_BLOCK_INFO_NUM; i++) {
@@ -731,14 +730,6 @@ static int ilitek_tddi_flash_fw_crc_check(u8 *pfw, bool check_fw_ver)
 	}
 
 	if (check_fw_ver) {
-		if (hex_info)
-			ilits->info_from_hex = DISABLE;
-
-		if (ili_ic_get_fw_ver() < 0) {
-			ILI_INFO("Failed to get fw ver\n");
-		}
-		if (hex_info)
-			ilits->info_from_hex = ENABLE;
 		/* Check FW version */
 		ILI_INFO("New FW ver = 0x%x, Current FW ver = 0x%x\n", tfd.new_fw_cb, ilits->chip->fw_ver);
 		if (tfd.new_fw_cb != ilits->chip->fw_ver) {
@@ -861,7 +852,7 @@ static int ilitek_tddi_fw_flash_erase(bool mcu)
 
 	if (!ice) {
 		if (ili_ice_mode_ctrl(ENABLE, mcu) < 0)
-			ILI_ERR("Enable ice mode failed while erasing flash\n");
+                        ILI_ERR("Enable ice mode failed while erasing flash\n");
 	}
 
 	for (i = 0; i < FW_BLOCK_INFO_NUM; i++) {
@@ -919,7 +910,7 @@ static int ilitek_tddi_fw_flash_erase(bool mcu)
 	}
 	if (!ice) {
 		if (ili_ice_mode_ctrl(DISABLE, mcu) < 0)
-			ILI_ERR("Disable ice mode failed after erase flash\n");
+                        ILI_ERR("Disable ice mode failed after erase flash\n");
 	}
 	return UPDATE_PASS;
 }
@@ -1035,12 +1026,10 @@ static void ilitek_tddi_fw_update_block_info(u8 *pfw)
 
 	/* Get hex report info block*/
 	ipio_memcpy(&ilits->rib, ilits->fw_info, sizeof(ilits->rib), sizeof(ilits->rib));
-	ilits->rib.nReportResolutionMode = (ilits->chip->core_ver >= CORE_VER_1470) ? (ilits->rib.nReportResolutionMode & 0x07) : POSITION_LOW_RESOLUTION;
-	ilits->rib.nCustomerType = (ilits->chip->core_ver >= CORE_VER_1470) ? ilits->rib.nCustomerType : POSITION_CUSTOMER_TYPE_OFF;
 	ILI_INFO("report_info_block : nReportByPixel = %d, nIsHostDownload = %d, nIsSPIICE = %d, nIsSPISLAVE = %d\n",
 		ilits->rib.nReportByPixel, ilits->rib.nIsHostDownload, ilits->rib.nIsSPIICE, ilits->rib.nIsSPISLAVE);
-	ILI_INFO("report_info_block : nIsI2C = %d, nReserved00 = %d, nCustomerType = %d, nReportResolutionMode = %d, nReserved02 = %x,  nReserved03 = %x\n",
-		ilits->rib.nIsI2C, ilits->rib.nReserved00, ilits->rib.nCustomerType, ilits->rib.nReportResolutionMode, ilits->rib.nReserved02, ilits->rib.nReserved03);
+	ILI_INFO("report_info_block : nIsI2C = %d, nReserved00 = %d, nReserved01 = %x, nReserved02 = %x,  nReserved03 = %x\n",
+		ilits->rib.nIsI2C, ilits->rib.nReserved00, ilits->rib.nReserved01, ilits->rib.nReserved02, ilits->rib.nReserved03);
 
 	/* Calculate update address */
 	ILI_INFO("New FW ver = 0x%x\n", tfd.new_fw_cb);
@@ -1094,8 +1083,6 @@ static int ilitek_tddi_fw_ili_convert(u8 *pfw)
 
 		/* AF tag */
 		num = i + 1;
-		if (num >= FW_BLOCK_INFO_NUM)
-			break;
 		if (((blk_map >> i) & 0x01) == 0x01) {
 			fbi[num].start = (CTPM_FW[132 + i * 6] << 16) | (CTPM_FW[133 + i * 6] << 8) | CTPM_FW[134 + i * 6];
 			fbi[num].end = (CTPM_FW[135 + i * 6] << 16) | (CTPM_FW[136 + i * 6] << 8) |  CTPM_FW[137 + i * 6];
@@ -1208,7 +1195,7 @@ static int ilitek_tddi_fw_hex_convert(u8 *phex, int size, u8 *pfw)
 
 static int ilitek_tdd_fw_hex_open(u8 op, u8 *pfw)
 {
-	int ret = 0, fsize = 0;
+	int ret =0, fsize = 0;
 	const struct firmware *fw = NULL;
 	struct file *f = NULL;
 	mm_segment_t old_fs;
@@ -1366,28 +1353,6 @@ int ili_fw_upgrade(int op)
 		}
 	}
 
-#if (ENGINEER_FLOW)
-	if (!ilits->eng_flow) {
-		do {
-			ret = ilitek_fw_flash_upgrade(pfw, OFF);
-			if (ret == UPDATE_PASS)
-				break;
-
-			ILI_ERR("Upgrade failed, do retry!\n");
-		} while (--retry > 0);
-
-		if (ret != UPDATE_PASS) {
-			ILI_ERR("Failed to upgrade fw %d times, erasing flash\n", retry);
-			if (ilitek_tddi_fw_flash_erase(OFF) < 0)
-				ILI_ERR("Failed to erase flash\n");
-			if (ili_reset_ctrl(ilits->reset) < 0)
-				ILI_ERR("TP reset failed after erase flash\n");
-		}
-	} else {
-		ILI_ERR("eng_flow do reset!\n");
-		ili_reset_ctrl(ilits->reset);
-	}
-#else
 	do {
 		ret = ilitek_fw_flash_upgrade(pfw, OFF);
 		if (ret == UPDATE_PASS)
@@ -1398,12 +1363,11 @@ int ili_fw_upgrade(int op)
 
 	if (ret != UPDATE_PASS) {
 		ILI_ERR("Failed to upgrade fw %d times, erasing flash\n", retry);
-		if (ilitek_tddi_fw_flash_erase(OFF) < 0)
-			ILI_ERR("Failed to erase flash\n");
-		if (ili_reset_ctrl(ilits->reset) < 0)
-			ILI_ERR("TP reset failed after erase flash\n");
+                if (ilitek_tddi_fw_flash_erase(OFF) < 0)
+                        ILI_ERR("Failed to erase flash\n");
+                if (ili_reset_ctrl(ilits->reset) < 0)
+                        ILI_ERR("TP reset failed after erase flash\n");
 	}
-#endif
 
 out:
 	if (ret < 0)

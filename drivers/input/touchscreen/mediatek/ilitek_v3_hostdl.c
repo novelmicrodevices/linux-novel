@@ -161,7 +161,7 @@ static int calc_hw_dma_crc(u32 start_addr, u32 block_size)
 
 static int ilitek_tddi_fw_iram_read(u8 *buf, u32 start, int len)
 {
-	int limit = 3 * K;	//SPI transfer data length must less than 4K
+	int limit = SPI_RX_BUF_SIZE;
 	int addr = 0, loop = 0, tmp_len = len, cnt = 0;
 	u8 cmd[4] = {0};
 
@@ -244,6 +244,7 @@ int ili_fw_dump_iram_data(u32 start, u32 end, bool save, bool mcu)
 		}
 
 		old_fs = get_fs();
+		set_fs(get_ds());
 		set_fs(KERNEL_DS);
 		pos = 0;
 		vfs_write(f, ilits->update_buf, len, &pos);
@@ -300,7 +301,7 @@ static int ilitek_tddi_fw_iram_program(u32 start, u8 *w_buf, u32 w_len, u32 spli
 				ILI_INFO("idev->update_buf[5 + 0x%X] = 0x%X\n", split_len - 1, ilits->update_buf[5 + split_len - 1]);
 				for (j = 0; j < (4 - (split_len % 4)); j++) {
 					ilits->update_buf[5 + j + split_len] = 0xFF;
-					ILI_INFO("idev->update_buf[5 + 0x%X] = 0x%X\n", j + split_len, ilits->update_buf[5 + j + split_len]);
+					ILI_INFO("idev->update_buf[5 + 0x%X] = 0x%X\n",j + split_len, ilits->update_buf[5 + j + split_len]);
 				}
 
 				ILI_INFO("split_len %% 4 = %d\n", split_len % 4);
@@ -375,23 +376,27 @@ static int ilitek_tddi_fw_iram_upgrade(u8 *pfw, bool mcu)
 			ILI_DBG("Download %s code from hex 0x%x to IRAM 0x%x, len = 0x%x\n",
 					fbi[i].name, fbi[i].start, fbi[i].mem_start, fbi[i].len);
 
+#if SPI_DMA_TRANSFER_SPLIT
 			if (ilitek_tddi_fw_iram_program(fbi[i].mem_start, (fw_ptr + fbi[i].start), fbi[i].len, SPI_UPGRADE_LEN) < 0)
 				ILI_ERR("IRAM program failed\n");
-
+#else
+			if (ilitek_tddi_fw_iram_program(fbi[i].mem_start, (fw_ptr + fbi[i].start), fbi[i].len, 0) < 0)
+				ILI_ERR("IRAM program failed\n");
+#endif
 			crc = CalculateCRC32(fbi[i].start, fbi[i].len - crc_len, fw_ptr);
 			dma = calc_hw_dma_crc(fbi[i].mem_start, fbi[i].len - crc_len);
 
 			if (mode != GESTURE) {
 				ilitek_tddi_fw_iram_read(crc_temp, (fbi[i].mem_start + fbi[i].len - crc_len), sizeof(crc_temp));
-				iram_crc = crc_temp[0] << 24 | crc_temp[1] << 16 | crc_temp[2] << 8 | crc_temp[3];
+				iram_crc = crc_temp[0] << 24 | crc_temp[1] << 16 |crc_temp[2] << 8 | crc_temp[3];
 				if (iram_crc != dma)
 					iram_crc_err = true;
 			}
 
 			ILI_INFO("%s CRC is %s hex(%x) : dma(%x) : iram(%x), calculation len is 0x%x\n",
-				fbi[i].name, ((crc != dma) || (iram_crc_err)) ? "Invalid !" : "Correct !", crc, dma, iram_crc, fbi[i].len - crc_len);
+				fbi[i].name,((crc != dma)||(iram_crc_err)) ? "Invalid !" : "Correct !", crc, dma, iram_crc, fbi[i].len - crc_len);
 
-			if ((crc != dma) || iram_crc_err) {
+			if ((crc != dma)|| iram_crc_err) {
 				ILI_ERR("CRC Error! print iram data with first 16 bytes\n");
 				ili_fw_dump_iram_data(0x0, 0xF, false, OFF);
 				return -EFW_CRC;
@@ -412,7 +417,9 @@ static int ilitek_tddi_fw_iram_upgrade(u8 *pfw, bool mcu)
 		ret = -EFW_ICE_MODE;
 	}
 
-	mdelay(20);
+	/* Waiting for fw ready sending first cmd */
+	if (!ilits->info_from_hex || (ilits->chip->core_ver < CORE_VER_1410))
+		mdelay(100);
 
 	return ret;
 }
@@ -483,19 +490,19 @@ static int ilitek_tddi_fw_update_block_info(u8 *pfw)
 	ILI_INFO("gesture hex addr => start = 0x%x, gesture_end = 0x%x, gesture_len = 0x%x\n", ges_fw_start, ges_fw_end, fbi[GESTURE].len);
 	ILI_INFO("=============================\n");
 
-	fbi[AP].name = "AP";
-	fbi[DATA].name = "DATA";
-	fbi[TUNING].name = "TUNING";
-	fbi[MP].name = "MP";
-	fbi[GESTURE].name = "GESTURE";
-	fbi[TAG].name = "TAG";
-	fbi[PARA_BACKUP].name = "PARA_BACKUP";
-	fbi[DDI].name = "DDI";
+        fbi[AP].name = "AP";
+        fbi[DATA].name = "DATA";
+        fbi[TUNING].name = "TUNING";
+        fbi[MP].name = "MP";
+        fbi[GESTURE].name = "GESTURE";
+        fbi[TAG].name = "TAG";
+        fbi[PARA_BACKUP].name = "PARA_BACKUP";
+        fbi[DDI].name = "DDI";
 
-	/* upgrade mode define */
-	fbi[DATA].mode = fbi[AP].mode = fbi[TUNING].mode = AP;
-	fbi[MP].mode = MP;
-	fbi[GESTURE].mode = GESTURE;
+        /* upgrade mode define */
+        fbi[DATA].mode = fbi[AP].mode = fbi[TUNING].mode = AP;
+        fbi[MP].mode = MP;
+        fbi[GESTURE].mode = GESTURE;
 
 	if (fbi[AP].end > (64*K))
 		tfd.is80k = true;
@@ -521,12 +528,10 @@ static int ilitek_tddi_fw_update_block_info(u8 *pfw)
 
 	/* Get hex report info block*/
 	ipio_memcpy(&ilits->rib, ilits->fw_info, sizeof(ilits->rib), sizeof(ilits->rib));
-	ilits->rib.nReportResolutionMode = (ilits->chip->core_ver >= CORE_VER_1470) ? (ilits->rib.nReportResolutionMode & 0x07) : POSITION_LOW_RESOLUTION;
-	ilits->rib.nCustomerType = (ilits->chip->core_ver >= CORE_VER_1470) ? ilits->rib.nCustomerType : POSITION_CUSTOMER_TYPE_OFF;
 	ILI_INFO("report_info_block : nReportByPixel = %d, nIsHostDownload = %d, nIsSPIICE = %d, nIsSPISLAVE = %d\n",
 		ilits->rib.nReportByPixel, ilits->rib.nIsHostDownload, ilits->rib.nIsSPIICE, ilits->rib.nIsSPISLAVE);
-	ILI_INFO("report_info_block : nIsI2C = %d, nReserved00 = %d, nCustomerType = %d, nReportResolutionMode = %d, nReserved02 = %x,  nReserved03 = %x\n",
-		ilits->rib.nIsI2C, ilits->rib.nReserved00, ilits->rib.nCustomerType, ilits->rib.nReportResolutionMode, ilits->rib.nReserved02, ilits->rib.nReserved03);
+	ILI_INFO("report_info_block : nIsI2C = %d, nReserved00 = %d, nReserved01 = %x, nReserved02 = %x,  nReserved03 = %x\n",
+		ilits->rib.nIsI2C, ilits->rib.nReserved00, ilits->rib.nReserved01, ilits->rib.nReserved02, ilits->rib.nReserved03);
 
 	/* Calculate update address */
 	ILI_INFO("New FW ver = 0x%x\n", tfd.new_fw_cb);
@@ -583,8 +588,6 @@ static int ilitek_tddi_fw_ili_convert(u8 *pfw)
 
 		/* AF tag */
 		num = i + 1;
-		if (num >= FW_BLOCK_INFO_NUM)
-			break;
 		if (((blk_map >> i) & 0x01) == 0x01) {
 			fbi[num].start = (CTPM_FW[132 + i * 6] << 16) | (CTPM_FW[133 + i * 6] << 8) | CTPM_FW[134 + i * 6];
 			fbi[num].end = (CTPM_FW[135 + i * 6] << 16) | (CTPM_FW[136 + i * 6] << 8) |  CTPM_FW[137 + i * 6];
@@ -702,7 +705,7 @@ static int ilitek_tddi_fw_hex_convert(u8 *phex, int size, u8 *pfw)
 
 static int ilitek_tdd_fw_hex_open(u8 op, u8 *pfw)
 {
-	int ret = 0, fsize = 0;
+	int ret =0, fsize = 0;
 	const struct firmware *fw = NULL;
 	struct file *f = NULL;
 	mm_segment_t old_fs;
@@ -767,7 +770,6 @@ static int ilitek_tdd_fw_hex_open(u8 op, u8 *pfw)
 			goto out;
 		}
 
-		ipio_vfree((void **)&(ilits->tp_fw.data));
 		ilits->tp_fw.size = 0;
 		ilits->tp_fw.data = vmalloc(fsize);
 		if (ERR_ALLOC_MEM(ilits->tp_fw.data)) {
@@ -783,6 +785,7 @@ static int ilitek_tdd_fw_hex_open(u8 op, u8 *pfw)
 
 		/* ready to map user's memory to obtain data by reading files */
 		old_fs = get_fs();
+		set_fs(get_ds());
 		set_fs(KERNEL_DS);
 		pos = 0;
 		vfs_read(f, (u8 *)ilits->tp_fw.data, fsize, &pos);
@@ -815,11 +818,9 @@ out:
 int ili_fw_upgrade(int op)
 {
 	int i, ret = 0, retry = 3;
-	static bool get_firmware;
 
 	if (!ilits->boot || ilits->force_fw_update || ERR_ALLOC_MEM(pfw)) {
 		ilits->gesture_load_code = false;
-		get_firmware = false;
 
 		if (ERR_ALLOC_MEM(pfw)) {
 			ipio_vfree((void **)&pfw);
@@ -865,38 +866,8 @@ int ili_fw_upgrade(int op)
 			ILI_ERR("hex file interface no match error\n");
 			return -EFW_INTERFACE;
 		}
-		get_firmware = true;
 	}
 
-	if (!get_firmware) {
-		ILI_ERR("Convert ILI file error\n");
-		return -EFW_CONVERT_FILE;
-	}
-
-#if (ENGINEER_FLOW)
-	if (!ilits->eng_flow) {
-		do {
-			ret = ilitek_tddi_fw_iram_upgrade(pfw, OFF);
-			if (ret == UPDATE_PASS)
-				break;
-
-			ILI_ERR("Upgrade failed, do retry!\n");
-		} while (--retry > 0);
-
-		if (ret != UPDATE_PASS) {
-			ILI_ERR("Failed to upgrade fw %d times, erasing iram\n", retry);
-			if (ili_reset_ctrl(ilits->reset) < 0)
-					ILI_ERR("TP reset failed while erasing data\n");
-			ilits->xch_num = 0;
-			ilits->ych_num = 0;
-			return ret;
-		}
-	} else {
-		ILI_ERR("eng_flow do reset!\n");
-		ili_reset_ctrl(ilits->reset);
-		mdelay(50);
-	}
-#else
 	do {
 		ret = ilitek_tddi_fw_iram_upgrade(pfw, OFF);
 		if (ret == UPDATE_PASS)
@@ -913,10 +884,8 @@ int ili_fw_upgrade(int op)
 		ilits->ych_num = 0;
 		return ret;
 	}
-#endif
+
 out:
-	if (!ilits->info_from_hex)
-		ili_irq_enable();
 	ili_ic_get_core_ver();
 	ili_ic_get_protocl_ver();
 	ili_ic_get_fw_ver();
@@ -928,20 +897,20 @@ out:
 
 void ili_fw_read_flash_info(bool mcu)
 {
-	return;
+        return;
 }
 
 void ili_flash_clear_dma(void)
 {
-	return;
+        return;
 }
 
 void ili_flash_dma_write(u32 start, u32 end, u32 len)
 {
-	return;
+        return;
 }
 
 int ili_fw_dump_flash_data(u32 start, u32 end, bool user, bool mcu)
 {
-	return 0;
+        return 0;
 }

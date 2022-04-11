@@ -376,13 +376,12 @@ static int ilitek_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *
 	else
 		ilits->reset = TP_HW_RST_ONLY;
 
-	ilits->rst_edge_delay = 40;
+	ilits->rst_edge_delay = 100;
 	ilits->fw_open = FILP_OPEN;
 	ilits->fw_upgrade_mode = UPGRADE_FLASH;
 	ilits->mp_move_code = ili_move_mp_code_flash;
 	ilits->gesture_move_code = ili_move_gesture_code_flash;
 	ilits->esd_recover = ili_wq_esd_i2c_check;
-	ilits->esd_func_ctrl = ENABLE_WQ_ESD;
 	ilits->ges_recover = ili_touch_esd_gesture_flash;
 	ilits->gesture_mode = DATA_FORMAT_GESTURE_INFO;
 	ilits->gesture_demo_ctrl = DISABLE;
@@ -393,9 +392,6 @@ static int ilitek_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *
 	ilits->irq_tirgger_type = IRQF_TRIGGER_FALLING;
 	ilits->info_from_hex = DISABLE;
 	ilits->wait_int_timeout = AP_INT_TIMEOUT;
-#if MULTI_REPORT_RATE
-	ilits->current_report_rate_mode = DDI60_TP120; /*Default report mode*/
-#endif
 
 #if ENABLE_GESTURE
 	ilits->gesture = DISABLE;
@@ -465,13 +461,11 @@ int ili_interface_dev_init(struct ilitek_hwif_info *hwif)
 	return i2c_add_driver(&info->bus_driver);
 }
 
-void ili_interface_dev_exit(struct ilitek_ts_data *ts, bool flag)
+void ili_interface_dev_exit(struct ilitek_ts_data *ts)
 {
 	struct touch_bus_info *info = (struct touch_bus_info *)ilits->hwif->info;
 
 	ILI_INFO("remove i2c dev\n");
-	if (flag == ENABLE) {
-		i2c_del_driver(&info->bus_driver);
-		ipio_kfree((void **)&info);
-	}
+	i2c_del_driver(&info->bus_driver);
+	ipio_kfree((void **)&info);
 }

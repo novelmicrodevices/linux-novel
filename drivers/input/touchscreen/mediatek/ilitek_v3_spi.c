@@ -30,7 +30,6 @@ struct touch_bus_info {
 struct ilitek_ts_data *ilits;
 
 #if SPI_DMA_TRANSFER_SPLIT
-#if SPI_DMA_TRANSFER_SPLIT_OLD
 #define DMA_TRANSFER_MAX_CHUNK		64   // number of chunks to be transferred.
 #define DMA_TRANSFER_MAX_LEN		1024 // length of a chunk.
 
@@ -135,122 +134,6 @@ out:
 	ipio_kfree((void **)&xfer);
 	return status;
 }
-#else
-#define DMA_TRANSFER_MAX_CHUNK		4   // number of chunks to be transferred.
-#define DMA_TRANSFER_MAX_LEN		4096 // length of a chunk.
-
-int ili_spi_write_then_read_split(struct spi_device *spi,
-		const void *txbuf, unsigned n_tx,
-		void *rxbuf, unsigned n_rx)
-{
-	int status = -1, duplex_len = 0;
-	int xfercnt = 0, xferlen = 0, xferloop = 0;
-	int offset = 0;
-	u8 cmd = 0;
-	struct spi_message message;
-	struct spi_transfer	xfer[DMA_TRANSFER_MAX_CHUNK];
-
-	if (n_rx > SPI_RX_BUF_SIZE) {
-		ILI_ERR("Rx length is greater than spi local buf, abort\n");
-		status = -ENOMEM;
-		goto out;
-	}
-
-	spi_message_init(&message);
-	memset(xfer, 0, sizeof(xfer));
-	memset(ilits->spi_tx, 0x0, SPI_TX_BUF_SIZE);
-	memset(ilits->spi_rx, 0x0, SPI_RX_BUF_SIZE);
-
-	if ((n_tx > 0) && (n_rx > 0))
-		cmd = SPI_READ;
-	else
-		cmd = SPI_WRITE;
-
-	switch (cmd) {
-	case SPI_WRITE:
-		if (n_tx % DMA_TRANSFER_MAX_LEN)
-			xferloop = (n_tx / DMA_TRANSFER_MAX_LEN) + 1;
-		else
-			xferloop = n_tx / DMA_TRANSFER_MAX_LEN;
-
-		if (xferloop > DMA_TRANSFER_MAX_CHUNK) {
-			ILI_ERR("xferloop = %d > %d\n", xferloop, DMA_TRANSFER_MAX_CHUNK);
-			status = -EINVAL;
-			break;
-		}
-
-		xferlen = n_tx;
-		memcpy(ilits->spi_tx, (u8 *)txbuf, xferlen);
-
-		for (xfercnt = 0; xfercnt < xferloop; xfercnt++) {
-			if (xferlen > DMA_TRANSFER_MAX_LEN)
-				xferlen = DMA_TRANSFER_MAX_LEN;
-
-			xfer[xfercnt].len = xferlen;
-			xfer[xfercnt].tx_buf = ilits->spi_tx + xfercnt * DMA_TRANSFER_MAX_LEN;
-			spi_message_add_tail(&xfer[xfercnt], &message);
-			xferlen = n_tx - (xfercnt+1) * DMA_TRANSFER_MAX_LEN;
-		}
-		status = spi_sync(spi, &message);
-		break;
-	case SPI_READ:
-		if (n_tx > DMA_TRANSFER_MAX_LEN) {
-			ILI_ERR("Tx length must be lower than dma length (%d).\n", DMA_TRANSFER_MAX_LEN);
-			status = -EINVAL;
-			break;
-		}
-
-		if (!atomic_read(&ilits->ice_stat))
-			offset = 2;
-
-		memcpy(ilits->spi_tx, txbuf, n_tx);
-		duplex_len = n_tx + n_rx + offset;
-
-		if (duplex_len % DMA_TRANSFER_MAX_LEN)
-			xferloop = (duplex_len / DMA_TRANSFER_MAX_LEN) + 1;
-		else
-			xferloop = duplex_len / DMA_TRANSFER_MAX_LEN;
-
-		if (xferloop > DMA_TRANSFER_MAX_CHUNK) {
-			ILI_ERR("xferloop = %d > %d\n", xferloop, DMA_TRANSFER_MAX_CHUNK);
-			status = -EINVAL;
-			break;
-		}
-
-		xferlen = duplex_len;
-		for (xfercnt = 0; xfercnt < xferloop; xfercnt++) {
-			if (xferlen > DMA_TRANSFER_MAX_LEN)
-				xferlen = DMA_TRANSFER_MAX_LEN;
-
-			xfer[xfercnt].len = xferlen;
-			xfer[xfercnt].tx_buf = ilits->spi_tx;
-			xfer[xfercnt].rx_buf = ilits->spi_rx + xfercnt * DMA_TRANSFER_MAX_LEN;
-			spi_message_add_tail(&xfer[xfercnt], &message);
-			xferlen = duplex_len - (xfercnt + 1) * DMA_TRANSFER_MAX_LEN;
-		}
-
-		status = spi_sync(spi, &message);
-		if (status == 0) {
-			if (ilits->spi_rx[1] != SPI_ACK && !atomic_read(&ilits->ice_stat)) {
-				status = DO_SPI_RECOVER;
-				ILI_ERR("Do spi recovery: rxbuf[1] = 0x%x, ice = %d\n", ilits->spi_rx[1], atomic_read(&ilits->ice_stat));
-				break;
-			}
-
-			memcpy((u8 *)rxbuf, ilits->spi_rx + offset + 1, n_rx);
-		} else {
-			ILI_ERR("spi read fail, status = %d\n", status);
-		}
-		break;
-	default:
-		ILI_INFO("Unknown command 0x%x\n", cmd);
-		break;
-	}
-
-out:
-	return status;
-}
-#endif
 #else
 int ili_spi_write_then_read_direct(struct spi_device *spi,
 		const void *txbuf, unsigned n_tx,
@@ -369,10 +252,9 @@ static int ili_spi_pll_clk_wakeup(void)
 	wdata[1] = wlen >> 8;
 	wdata[2] = wlen & 0xff;
 	index = 3;
+	wlen += index;
 
 	ipio_memcpy(&wdata[index], wakeup, wlen, wlen);
-
-	wlen += index;
 
 	ILI_INFO("Write dummy to wake up spi pll clk\n");
 	if (ilits->spi_write_then_read(ilits->spi, wdata, wlen, NULL, 0) < 0) {
@@ -400,7 +282,7 @@ static int ili_spi_wrapper(u8 *txbuf, u32 wlen, u8 *rxbuf, u32 rlen, bool spi_ir
 		/* 3 bytes data consist of length and header */
 		if ((wlen + 3) > sizeof(wdata)) {
 			ILI_ERR("WARNING! wlen(%d) > wdata(%d), using wdata length to transfer\n", wlen, (int)sizeof(wdata));
-			wlen = sizeof(wdata) - 3;
+			wlen = sizeof(wdata);
 		}
 	}
 
@@ -426,8 +308,7 @@ static int ili_spi_wrapper(u8 *txbuf, u32 wlen, u8 *rxbuf, u32 rlen, bool spi_ir
 
 	switch (mode) {
 	case SPI_WRITE:
-		atomic_set(&ilits->ignore_report, START);
-#if (PLL_CLK_WAKEUP_TP_RESUME == ENABLE)
+#if ( PLL_CLK_WAKEUP_TP_RESUME == ENABLE )
 		if (ilits->pll_clk_wakeup == true) {
 #else
 		if ((ilits->pll_clk_wakeup == true) && (ilits->tp_suspend == true)) {
@@ -448,9 +329,9 @@ static int ili_spi_wrapper(u8 *txbuf, u32 wlen, u8 *rxbuf, u32 rlen, bool spi_ir
 			index = 3;
 		}
 
-		ipio_memcpy(&wdata[index], txbuf, wlen, wlen);
-
 		wlen += index;
+
+		ipio_memcpy(&wdata[index], txbuf, wlen, wlen);
 
 		/*
 		* NOTE: If TP driver is doing MP test and commanding 0xF1 to FW, we add a checksum
@@ -501,8 +382,6 @@ static int ili_spi_wrapper(u8 *txbuf, u32 wlen, u8 *rxbuf, u32 rlen, bool spi_ir
 		break;
 	}
 
-	atomic_set(&ilits->ignore_report, END);
-
 	if (spi_irq)
 		atomic_set(&ilits->cmd_int_check, DISABLE);
 
@@ -529,7 +408,7 @@ int ili_core_spi_setup(int num)
 		TP_SPI_CLK_15M
 	};
 
-	if (num >= ARRAY_SIZE(freq)) {
+	if (num > sizeof(freq)) {
 		ILI_ERR("Invaild clk freq, set default clk freq\n");
 		num = 7;
 	}
@@ -641,7 +520,6 @@ static int ilitek_spi_probe(struct spi_device *spi)
 	ilits->mp_move_code = ili_move_mp_code_iram;
 	ilits->gesture_move_code = ili_move_gesture_code_iram;
 	ilits->esd_recover = ili_wq_esd_spi_check;
-	ilits->esd_func_ctrl = ENABLE_WQ_ESD;
 	ilits->ges_recover = ili_touch_esd_gesture_iram;
 	ilits->gesture_mode = DATA_FORMAT_GESTURE_INFO;
 	ilits->gesture_demo_ctrl = DISABLE;
@@ -652,9 +530,6 @@ static int ilitek_spi_probe(struct spi_device *spi)
 	ilits->irq_tirgger_type = IRQF_TRIGGER_FALLING;
 	ilits->info_from_hex = ENABLE;
 	ilits->wait_int_timeout = AP_INT_TIMEOUT;
-#if MULTI_REPORT_RATE
-	ilits->current_report_rate_mode = DDI60_TP120; 	/*Default report mode*/
-#endif
 
 #if ENABLE_GESTURE
 	ilits->gesture = DISABLE;
@@ -727,7 +602,7 @@ int ili_interface_dev_init(struct ilitek_hwif_info *hwif)
 	return spi_register_driver(&info->bus_driver);
 }
 
-void ili_interface_dev_exit(struct ilitek_ts_data *ts, bool flag)
+void ili_interface_dev_exit(struct ilitek_ts_data *ts)
 {
 	struct touch_bus_info *info = (struct touch_bus_info *)ilits->hwif->info;
 
@@ -735,9 +610,6 @@ void ili_interface_dev_exit(struct ilitek_ts_data *ts, bool flag)
 	kfree(ilits->update_buf);
 	kfree(ilits->spi_tx);
 	kfree(ilits->spi_rx);
-
-	if (flag == ENABLE) {
-		spi_unregister_driver(&info->bus_driver);
-		ipio_kfree((void **)&info);
-	}
+	spi_unregister_driver(&info->bus_driver);
+	ipio_kfree((void **)&info);
 }
