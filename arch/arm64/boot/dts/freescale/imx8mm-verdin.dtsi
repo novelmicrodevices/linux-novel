@@ -634,7 +634,7 @@
 		interrupt-parent = <&gpio3>;
 		interrupts = <15 IRQ_TYPE_EDGE_FALLING>;
 		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_gpio_9_dsi>, <&pinctrl_i2s_2_bclk_touch_reset>;
+		pinctrl-0 = <&pinctrl_i2c2_synaptics_dsx_io>, <&pinctrl_i2s_2_bclk_touch_reset>;
 		reg = <0x4a>;
 		/* Verdin I2S_2_BCLK (TOUCH_RESET#, SODIMM 42) */
 		reset-gpios = <&gpio3 23 GPIO_ACTIVE_HIGH>;
@@ -1020,7 +1020,7 @@
 	};
 
 	/* Verdin GPIO_9_DSI (pulled-up as active-low) */
-	pinctrl_gpio_9_dsi: gpio9dsigrp {
+	pinctrl_i2c2_synaptics_dsx_io: synaptics_dsx_iogrp {
 		fsl,pins = <
 			MX8MM_IOMUXC_NAND_RE_B_GPIO3_IO15		0x146	/* SODIMM 17 */
 		>;
