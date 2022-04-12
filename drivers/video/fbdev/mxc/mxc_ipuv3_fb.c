@@ -3605,7 +3605,7 @@ static int mxcfb_probe(struct platform_device *pdev)
 	if (ret)
 		dev_err(&pdev->dev, "Error %d on creating file for disp "
 				    " device propety\n", ret);
-
+	mxcfb_blank(0,fbi);
 	return 0;
 
 mxcfb_setupoverlay_failed:
