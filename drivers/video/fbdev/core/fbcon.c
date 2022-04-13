@@ -652,6 +652,9 @@ static void fbcon_prepare_logo(struct vc_data *vc, struct fb_info *info,
 	if (logo_shown == FBCON_LOGO_DONTSHOW)
 		return;
 
+	/* TEST TEST TEST TEST TEST TEST TEST TEST TEST*/
+	vc->vc_bottom = 68;
+	/* TEST TEST TEST TEST TEST TEST TEST TEST TEST*/
 	if (logo_lines > vc->vc_bottom) {
 		logo_shown = FBCON_LOGO_CANSHOW;
 		printk(KERN_INFO
